@@ -11,7 +11,11 @@ PHP_BIN="${PHP_BIN:-/opt/php8/bin/php}"
 WEB_USER="${WEB_USER:-www-data}"
 WEB_GROUP="${WEB_GROUP:-www-data}"
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+  ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+else
+  ROOT_DIR="$(pwd)"
+fi
 ADMIN_ADDONS="$MKAUTH_DIR/admin/addons"
 JOB_DIR="$MKAUTH_DIR/jobs/SICREDIAPI"
 STAMP="$(date +%Y%m%d%H%M%S)"
@@ -23,6 +27,13 @@ fi
 
 if [ ! -d "$MKAUTH_DIR" ]; then
   echo "Diretorio MK Auth nao encontrado: $MKAUTH_DIR" >&2
+  exit 1
+fi
+
+if [ ! -d "$ROOT_DIR/addons/rel_conciliacao_sicredi" ] || [ ! -f "$ROOT_DIR/jobs/SICREDIAPI/conciliar_sicredi_desconto.php" ]; then
+  echo "Arquivos do instalador nao encontrados em $ROOT_DIR." >&2
+  echo "Use o bootstrap via curl:" >&2
+  echo "curl -fsSL https://raw.githubusercontent.com/brsxdlols/mkauth-sicredi/main/installers/github-install.sh | sudo bash" >&2
   exit 1
 fi
 
