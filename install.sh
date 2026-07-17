@@ -77,19 +77,34 @@ for addon in rel_conciliacao_sicredi log_sicredi_api; do
   fi
 done
 
-add_menu_line() {
-  local file="$1"
+install_menu_lines() {
+  local menu_file=""
+  local file
   local line_baixas="add_menu.financeiro('{\"plink\": \"' + minha_url + 'addons/rel_conciliacao_sicredi/\", \"ptext\": \"Sicredi API - Baixas\"}');"
   local line_logs="add_menu.financeiro('{\"plink\": \"' + minha_url + 'addons/log_sicredi_api/\", \"ptext\": \"Sicredi API - Logs\"}');"
-  [ -f "$file" ] || return 0
-  cp -a "$file" "$file.bak_sicredi_$STAMP"
-  grep -v 'addons/rel_conciliacao_sicredi/' "$file" | grep -v 'addons/log_sicredi_api/' > "$file.tmp_sicredi"
-  mv "$file.tmp_sicredi" "$file"
-  printf "\n%s\n%s\n" "$line_baixas" "$line_logs" >> "$file"
+
+  for file in "$ADMIN_ADDONS/addon.js" "$ADMIN_ADDONS/addon_aplicativos.js"; do
+    [ -f "$file" ] || continue
+    cp -a "$file" "$file.bak_sicredi_$STAMP"
+    sed -i \
+      -e '/addons\/rel_conciliacao_sicredi\//d' \
+      -e '/addons\/log_sicredi_api\//d' \
+      -e '/Sicredi API - Baixas/d' \
+      -e '/Sicredi API - Logs/d' \
+      "$file"
+    [ -n "$menu_file" ] || menu_file="$file"
+  done
+
+  if [ -z "$menu_file" ]; then
+    menu_file="$ADMIN_ADDONS/addon.js"
+    touch "$menu_file"
+  fi
+
+  printf "\n%s\n%s\n" "$line_baixas" "$line_logs" >> "$menu_file"
+  echo "Menu Sicredi instalado em: $menu_file"
 }
 
-add_menu_line "$ADMIN_ADDONS/addon.js"
-add_menu_line "$ADMIN_ADDONS/addon_aplicativos.js"
+install_menu_lines
 
 chmod +x "$JOB_DIR/conciliar_sicredi_desconto.php" "$JOB_DIR/run_conciliar_sicredi_desconto.sh"
 chown -R "$WEB_USER:$WEB_GROUP" "$ADMIN_ADDONS/rel_conciliacao_sicredi" "$ADMIN_ADDONS/log_sicredi_api" || true
