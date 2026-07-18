@@ -79,6 +79,21 @@ $selectTitulo = $mysqli->prepare(
       LIMIT 1"
 );
 
+$selectTitulosPorNosso = $mysqli->prepare(
+    "SELECT l.id, l.login, l.nossonum, l.status, l.datapag, l.valor, l.valorpag,
+            l.id_empresa, l.referencia, l.obs,
+            c.nome, c.plano, c.desconto, c.acrescimo,
+            p.valor AS valor_plano
+       FROM sis_lanc l
+       JOIN sis_cliente c ON c.login = l.login
+  LEFT JOIN sis_plano p ON p.nome = c.plano
+      WHERE l.nossonum = ?
+        AND l.deltitulo = 0
+        AND l.status <> 'pago'
+        AND l.datapag IS NULL
+      ORDER BY l.id DESC"
+);
+
 $updateTitulo = $mysqli->prepare(
     "UPDATE sis_lanc
         SET datapag = ?,
@@ -124,33 +139,59 @@ while ($row = $notificacoes->fetch_assoc()) {
     $nosso = (string) ($dados['nossoNumero'] ?? '');
     $idEmpresa = parseTituloEmpresa((string) ($dados['idTituloEmpresa'] ?? ''));
     $valorLiquidacao = money2($dados['valorLiquidacao'] ?? '');
-    if ($nosso === '' || !$idEmpresa || (float) $valorLiquidacao <= 0) {
+    if ($nosso === '' || (float) $valorLiquidacao <= 0) {
         $ignorados[] = "{$row['id']}: dados obrigatorios ausentes";
         continue;
     }
 
-    $selectTitulo->bind_param('ss', $nosso, $idEmpresa);
-    $selectTitulo->execute();
-    $titulo = $selectTitulo->get_result()->fetch_assoc();
-    if (!$titulo) {
-        $ignorados[] = "{$row['id']}: titulo nao encontrado para nosso=$nosso id_empresa=$idEmpresa";
-        continue;
+    if ($idEmpresa) {
+        $selectTitulo->bind_param('ss', $nosso, $idEmpresa);
+        $selectTitulo->execute();
+        $titulo = $selectTitulo->get_result()->fetch_assoc();
+        if (!$titulo) {
+            $ignorados[] = "{$row['id']}: titulo nao encontrado para nosso=$nosso id_empresa=$idEmpresa";
+            continue;
+        }
+    } else {
+        $selectTitulosPorNosso->bind_param('s', $nosso);
+        $selectTitulosPorNosso->execute();
+        $resultTitulos = $selectTitulosPorNosso->get_result();
+        $qtdTitulos = $resultTitulos->num_rows;
+        if ($qtdTitulos !== 1) {
+            $ignorados[] = "{$row['id']}: idTituloEmpresa ausente e nosso=$nosso encontrou $qtdTitulos titulo(s) aberto(s)";
+            continue;
+        }
+        $titulo = $resultTitulos->fetch_assoc();
     }
     if ($titulo['status'] === 'pago' || !empty($titulo['datapag'])) {
         $ignorados[] = "{$row['id']}: titulo {$titulo['id']} ja pago";
         continue;
     }
 
+    $valorJuros = money2($dados['valorJuros'] ?? 0);
+    $valorMulta = money2($dados['valorMulta'] ?? 0);
+    $valorDescontoBanco = money2($dados['valorDesconto'] ?? 0);
+    $valorAbatimento = money2($dados['valorAbatimento'] ?? 0);
+    $valorPrincipalPago = money2(
+        (float) $valorLiquidacao
+        - (float) $valorJuros
+        - (float) $valorMulta
+        + (float) $valorDescontoBanco
+        + (float) $valorAbatimento
+    );
     $valorBase = money2($titulo['valor']);
     $valorLiquidoCadastro = money2((float) money2($titulo['valor']) - (float) money2($titulo['desconto']) + (float) money2($titulo['acrescimo']));
     $valorPlanoLiquido = money2((float) money2($titulo['valor_plano'] ?? $titulo['valor']) - (float) money2($titulo['desconto']) + (float) money2($titulo['acrescimo']));
     $valorAceito = (
         abs((float) $valorLiquidacao - (float) $valorLiquidoCadastro) <= 0.01 ||
         abs((float) $valorLiquidacao - (float) $valorPlanoLiquido) <= 0.01 ||
-        abs((float) $valorLiquidacao - (float) $valorBase) <= 0.01
+        abs((float) $valorLiquidacao - (float) $valorBase) <= 0.01 ||
+        abs((float) $valorPrincipalPago - (float) $valorLiquidoCadastro) <= 0.01 ||
+        abs((float) $valorPrincipalPago - (float) $valorPlanoLiquido) <= 0.01 ||
+        abs((float) $valorPrincipalPago - (float) $valorBase) <= 0.01
     );
     if (!$valorAceito) {
-        $ignorados[] = "{$row['id']}: valor nao confere titulo={$titulo['id']} pago=$valorLiquidacao liquido=$valorLiquidoCadastro plano_liquido=$valorPlanoLiquido";
+        $ignorados[] = "{$row['id']}: valor nao confere titulo={$titulo['id']} pago=$valorLiquidacao principal=$valorPrincipalPago liquido=$valorLiquidoCadastro plano_liquido=$valorPlanoLiquido";
         continue;
     }
 
@@ -163,6 +204,7 @@ while ($row = $notificacoes->fetch_assoc()) {
         'id_empresa' => $idEmpresa,
         'movimento' => $movimento,
         'valor_pago' => $valorLiquidacao,
+        'valor_principal' => $valorPrincipalPago,
         'valor_lanc' => money2($titulo['valor']),
         'desconto' => money2($titulo['desconto']),
         'acrescimo' => money2($titulo['acrescimo']),
