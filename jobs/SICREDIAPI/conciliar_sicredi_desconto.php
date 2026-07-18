@@ -89,8 +89,6 @@ $selectTitulosPorNosso = $mysqli->prepare(
   LEFT JOIN sis_plano p ON p.nome = c.plano
       WHERE l.nossonum = ?
         AND l.deltitulo = 0
-        AND l.status <> 'pago'
-        AND l.datapag IS NULL
       ORDER BY l.id DESC"
 );
 
@@ -115,7 +113,7 @@ $updateTitulo = $mysqli->prepare(
 
 $updateNotificacao = $mysqli->prepare(
     "UPDATE sis_notificacoes
-        SET resposta = 'LIQUIDADO CONCILIADO'
+        SET resposta = ?
       WHERE id = ?
         AND resposta = 'REJEITADO'"
 );
@@ -163,10 +161,6 @@ while ($row = $notificacoes->fetch_assoc()) {
         }
         $titulo = $resultTitulos->fetch_assoc();
     }
-    if ($titulo['status'] === 'pago' || !empty($titulo['datapag'])) {
-        $ignorados[] = "{$row['id']}: titulo {$titulo['id']} ja pago";
-        continue;
-    }
 
     $valorJuros = money2($dados['valorJuros'] ?? 0);
     $valorMulta = money2($dados['valorMulta'] ?? 0);
@@ -195,6 +189,9 @@ while ($row = $notificacoes->fetch_assoc()) {
         continue;
     }
 
+    $jaPago = ($titulo['status'] === 'pago' || !empty($titulo['datapag']));
+    $respostaConciliada = $jaPago ? 'LIQUIDADO MANUAL CONCILIADO' : 'LIQUIDADO CONCILIADO';
+
     $candidatos[] = [
         'notif_id' => (int) $row['id'],
         'titulo_id' => (int) $titulo['id'],
@@ -212,6 +209,8 @@ while ($row = $notificacoes->fetch_assoc()) {
         'datapag' => eventDate($dados),
         'recibo' => (string) ($dados['idMovi'] ?? $dados['idEventoWebhook'] ?? ('sicredi-' . $row['id'])),
         'referencia' => $titulo['referencia'],
+        'ja_pago' => $jaPago,
+        'resposta' => $respostaConciliada,
     ];
 }
 
@@ -220,7 +219,7 @@ echo "Periodo analisado: {$days} dia(s)\n";
 echo "Candidatos aprovados: " . count($candidatos) . "\n";
 foreach ($candidatos as $c) {
     echo sprintf(
-        "#%d titulo=%d login=%s nosso=%s pago=%s liquido=%s venc/ref=%s data=%s movimento=%s\n",
+        "#%d titulo=%d login=%s nosso=%s pago=%s liquido=%s venc/ref=%s data=%s movimento=%s acao=%s\n",
         $c['notif_id'],
         $c['titulo_id'],
         $c['login'],
@@ -229,7 +228,8 @@ foreach ($candidatos as $c) {
         $c['valor_liquido'],
         $c['referencia'],
         $c['datapag'],
-        $c['movimento']
+        $c['movimento'],
+        $c['ja_pago'] ? 'conciliar_manual' : 'baixar'
     );
 }
 
@@ -247,15 +247,18 @@ if (!$apply) {
 $mysqli->begin_transaction();
 try {
     foreach ($candidatos as $c) {
-        $valor = (float) $c['valor_pago'];
-        $updateTitulo->bind_param('ssdi', $c['datapag'], $c['recibo'], $valor, $c['titulo_id']);
-        $updateTitulo->execute();
-        if ($updateTitulo->affected_rows !== 1) {
-            throw new RuntimeException("titulo {$c['titulo_id']} nao atualizado");
+        if (!$c['ja_pago']) {
+            $valor = (float) $c['valor_pago'];
+            $updateTitulo->bind_param('ssdi', $c['datapag'], $c['recibo'], $valor, $c['titulo_id']);
+            $updateTitulo->execute();
+            if ($updateTitulo->affected_rows !== 1) {
+                throw new RuntimeException("titulo {$c['titulo_id']} nao atualizado");
+            }
         }
 
         $notifId = $c['notif_id'];
-        $updateNotificacao->bind_param('i', $notifId);
+        $resposta = $c['resposta'];
+        $updateNotificacao->bind_param('si', $resposta, $notifId);
         $updateNotificacao->execute();
         if ($updateNotificacao->affected_rows !== 1) {
             throw new RuntimeException("notificacao {$notifId} nao atualizada");

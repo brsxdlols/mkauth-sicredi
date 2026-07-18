@@ -123,9 +123,9 @@ $params = [$start . ' 00:00:00', $end . ' 23:59:59'];
 $types = 'ss';
 
 if ($origin === 'conciliadas') {
-    $where .= " AND n.resposta = 'LIQUIDADO CONCILIADO'";
+    $where .= " AND n.resposta LIKE '%CONCILIADO%'";
 } elseif ($origin === 'nativas') {
-    $where .= " AND n.resposta <> 'LIQUIDADO CONCILIADO'";
+    $where .= " AND n.resposta NOT LIKE '%CONCILIADO%'";
 }
 
 if ($search !== '') {
@@ -157,8 +157,11 @@ $sql = "SELECT
             l.coletor
         FROM sis_notificacoes n
         JOIN sis_lanc l
-          ON l.id_empresa = REPLACE(SUBSTRING_INDEX(SUBSTRING_INDEX(n.dados, '\"idTituloEmpresa\":\"MKAUTH', -1), 'G', 1), 'P', '')
-         AND l.nossonum = SUBSTRING_INDEX(SUBSTRING_INDEX(n.dados, '\"nossoNumero\":\"', -1), '\"', 1)
+          ON l.nossonum = SUBSTRING_INDEX(SUBSTRING_INDEX(n.dados, '\"nossoNumero\":\"', -1), '\"', 1)
+         AND (
+              n.dados NOT LIKE '%\"idTituloEmpresa\"%'
+              OR l.id_empresa = REPLACE(SUBSTRING_INDEX(SUBSTRING_INDEX(n.dados, '\"idTituloEmpresa\":\"MKAUTH', -1), 'G', 1), 'P', '')
+         )
         LEFT JOIN sis_cliente c ON c.login = l.login
         WHERE $where
         GROUP BY l.id

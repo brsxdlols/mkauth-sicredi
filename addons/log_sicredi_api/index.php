@@ -100,7 +100,7 @@ if ($status === 'erros') {
 } elseif ($status === 'liquidados') {
     $where .= " AND resposta LIKE 'LIQUIDADO%'";
 } elseif ($status === 'conciliados') {
-    $where .= " AND resposta = 'LIQUIDADO CONCILIADO'";
+    $where .= " AND resposta LIKE '%CONCILIADO%'";
 }
 
 if ($search !== '') {
@@ -137,7 +137,7 @@ while ($row = mysqli_fetch_assoc($result)) {
     $total++;
 
     if (strpos((string) $row['resposta'], 'LIQUIDADO') === 0) $liquidados++;
-    if ((string) $row['resposta'] === 'LIQUIDADO CONCILIADO') $conciliados++;
+    if (strpos((string) $row['resposta'], 'CONCILIADO') !== false) $conciliados++;
     if (strpos((string) $row['resposta'], 'LIQUIDADO') !== 0) $erros++;
 }
 ?>
@@ -214,7 +214,7 @@ while ($row = mysqli_fetch_assoc($result)) {
                 foreach ($rows as $row) {
                     $payload = $row['payload'];
                     $resposta = (string) $row['resposta'];
-                    $badgeClass = strpos($resposta, 'LIQUIDADO CONCILIADO') === 0 ? 'badge warn' : (strpos($resposta, 'LIQUIDADO') === 0 ? 'badge ok' : 'badge err');
+                    $badgeClass = strpos($resposta, 'CONCILIADO') !== false ? 'badge warn' : (strpos($resposta, 'LIQUIDADO') === 0 ? 'badge ok' : 'badge err');
                     $nosso = payload_value($payload, 'nossoNumero');
                     $movimento = payload_value($payload, 'movimento');
                     $valor = payload_value($payload, 'valorLiquidacao');
