@@ -21,6 +21,8 @@
         .sicredi-logo { width: 118px; max-width: 34vw; height: auto; display: block; }
         .titlebar h1 { color: var(--sicredi-dark); font-size: 22px; font-weight: 700; margin: 0; }
         .muted { color: #6b7b89; font-size: 12px; }
+        .client-link { color: #063; text-decoration: none; }
+        .client-link:hover { text-decoration: underline; }
         .filters { display: grid; grid-template-columns: 150px 150px 170px minmax(220px, 1fr) 170px 92px; gap: 10px; align-items: end; }
         .filter-action { align-self: start; display: flex; align-items: flex-start; padding-top: 23px; }
         .filter-action .btn { width: 100%; margin: 0; }
@@ -108,12 +110,13 @@ if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $end)) $end = $today;
 if (!in_array($origin, ['todas', 'conciliadas', 'nativas'], true)) $origin = 'todas';
 
 $orderSql = $order === 'data_asc'
-    ? 'DATE(l.datapag) ASC, l.datapag ASC, l.id ASC'
-    : 'DATE(l.datapag) DESC, l.datapag DESC, l.id DESC';
+    ? 'DATE(MAX(n.data)) ASC, MAX(n.data) ASC, l.id ASC'
+    : 'DATE(MAX(n.data)) DESC, MAX(n.data) DESC, l.id DESC';
 
 $where = "n.servico = 'sicredi'
           AND l.status = 'pago'
-          AND l.datapag BETWEEN ? AND ?
+          AND LOWER(IFNULL(l.coletor, '')) NOT LIKE '%retorno%'
+          AND n.data BETWEEN ? AND ?
           AND (
               n.resposta LIKE 'LIQUIDADO%'
               OR n.resposta = 'BAIXADO'
@@ -138,13 +141,16 @@ if ($search !== '') {
 $sql = "SELECT
             MAX(n.id) AS notificacao_id,
             MAX(n.data) AS data_notificacao,
+            MAX(n.data) AS data_relatorio,
             GROUP_CONCAT(DISTINCT n.resposta ORDER BY n.id SEPARATOR ', ') AS respostas_api,
             l.id AS titulo,
             l.login,
             c.nome,
+            c.uuid_cliente,
             l.nossonum,
             l.id_empresa,
             l.datavenc,
+            l.processamento,
             l.datapag,
             l.valor,
             l.valorpag,
@@ -157,11 +163,16 @@ $sql = "SELECT
             l.coletor
         FROM sis_notificacoes n
         JOIN sis_lanc l
-          ON l.nossonum = SUBSTRING_INDEX(SUBSTRING_INDEX(n.dados, '\"nossoNumero\":\"', -1), '\"', 1)
-         AND (
-              n.dados NOT LIKE '%\"idTituloEmpresa\"%'
-              OR l.id_empresa = REPLACE(SUBSTRING_INDEX(SUBSTRING_INDEX(n.dados, '\"idTituloEmpresa\":\"MKAUTH', -1), 'G', 1), 'P', '')
-         )
+          ON (
+              (
+                  n.dados LIKE '%\"idTituloEmpresa\"%'
+                  AND l.id_empresa = REPLACE(SUBSTRING_INDEX(SUBSTRING_INDEX(n.dados, '\"idTituloEmpresa\":\"MKAUTH', -1), 'G', 1), 'P', '')
+              )
+              OR (
+                  n.dados NOT LIKE '%\"idTituloEmpresa\"%'
+                  AND l.nossonum = SUBSTRING_INDEX(SUBSTRING_INDEX(n.dados, '\"nossoNumero\":\"', -1), '\"', 1)
+              )
+          )
         LEFT JOIN sis_cliente c ON c.login = l.login
         WHERE $where
         GROUP BY l.id
@@ -181,7 +192,7 @@ while ($row = mysqli_fetch_assoc($result)) {
     $rows[] = $row;
     $total += (float) $row['valorpag'];
     $clientes[$row['login']] = true;
-    $dias[substr($row['datapag'], 0, 10)] = true;
+    $dias[substr($row['data_relatorio'], 0, 10)] = true;
     if (strpos((string) $row['respostas_api'], 'CONCILIADO') !== false) {
         $conciliadas++;
     }
@@ -271,7 +282,7 @@ while ($row = mysqli_fetch_assoc($result)) {
                 $dayTotal = 0.0;
                 $dayCount = 0;
                 foreach ($rows as $row) {
-                    $day = substr($row['datapag'], 0, 10);
+                    $day = substr($row['data_relatorio'], 0, 10);
                     if ($currentDay !== $day) {
                         if ($currentDay !== null) {
                             echo '<tr class="total-row"><td colspan="7">Total do dia ' . h(date_br($currentDay)) . '</td><td class="num">' . h(money_br($dayTotal)) . '</td><td colspan="3">' . $dayCount . ' baixa(s)</td></tr>';
@@ -288,11 +299,17 @@ while ($row = mysqli_fetch_assoc($result)) {
                     $badgeClass = strpos($apiType, 'CONCILIADO') !== false ? 'badge badge-warn' : 'badge badge-soft';
 
                     echo '<tr>';
-                    echo '<td data-label="Data">' . h(date_br($row['datapag'], true)) . '</td>';
+                    echo '<td data-label="Data">' . h(date_br($row['data_relatorio'], true)) . '</td>';
                     echo '<td data-label="Titulo"><a href="/admin/titulo_info.hhvm?titulo=' . h($row['titulo']) . '" target="_blank">' . h($row['titulo']) . '</a></td>';
-                    echo '<td data-label="Cliente"><b>' . h($row['nome']) . '</b><br><span class="muted">' . h($row['login']) . '</span></td>';
+                    $clienteNome = h($row['nome']);
+                    if (!empty($row['uuid_cliente'])) {
+                        $clienteNome = '<a class="client-link" href="/admin/cliente_det.hhvm?uuid=' . h($row['uuid_cliente']) . '" target="_blank"><b>' . h($row['nome']) . '</b></a>';
+                    } else {
+                        $clienteNome = '<b>' . h($row['nome']) . '</b>';
+                    }
+                    echo '<td data-label="Cliente">' . $clienteNome . '<br><span class="muted">' . h($row['login']) . '</span></td>';
                     echo '<td data-label="Nosso No.">' . h($row['nossonum']) . '</td>';
-                    echo '<td data-label="Referencia">' . h($row['referencia']) . '<br><span class="muted">' . h($row['obs']) . '</span></td>';
+                    echo '<td data-label="Referencia">' . h($row['referencia']) . '<br><span class="muted">' . h($row['obs']) . '</span><br><span class="muted"><b>Venc.</b> ' . h(date_br($row['datavenc'])) . ' &nbsp; <b>Lan&ccedil;:</b> ' . h(date_br($row['processamento'])) . '</span></td>';
                     echo '<td data-label="Valor titulo" class="num">' . h(money_br($row['valor'])) . '</td>';
                     echo '<td data-label="Desc." class="num">' . h(money_br($row['desconto'])) . '</td>';
                     echo '<td data-label="Valor pago" class="num"><span class="badge">' . h(money_br($row['valorpag'])) . '</span></td>';

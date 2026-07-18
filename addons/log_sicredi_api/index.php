@@ -84,12 +84,12 @@
 $today = date('Y-m-d');
 $start = $_GET['data_inicial'] ?? date('Y-m-d', strtotime('-7 days'));
 $end = $_GET['data_final'] ?? $today;
-$status = $_GET['status'] ?? 'erros';
+$status = $_GET['status'] ?? 'todos';
 $search = trim($_GET['busca'] ?? '');
 
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $start)) $start = date('Y-m-d', strtotime('-7 days'));
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $end)) $end = $today;
-if (!in_array($status, ['todos', 'erros', 'liquidados', 'conciliados'], true)) $status = 'erros';
+if (!in_array($status, ['todos', 'erros', 'liquidados', 'conciliados'], true)) $status = 'todos';
 
 $where = "servico = 'sicredi' AND data BETWEEN ? AND ?";
 $params = [$start . ' 00:00:00', $end . ' 23:59:59'];

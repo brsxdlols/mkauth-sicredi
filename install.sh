@@ -7,6 +7,7 @@ DB_USER="${MKAUTH_DB_USER:-root}"
 DB_PASS="${MKAUTH_DB_PASS:-vertrigo}"
 DB_NAME="${MKAUTH_DB_NAME:-mkradius}"
 INSTALL_CRON="${INSTALL_CRON:-1}"
+RUN_CONCILIADOR_NOW="${RUN_CONCILIADOR_NOW:-1}"
 PHP_BIN="${PHP_BIN:-/opt/php8/bin/php}"
 WEB_USER="${WEB_USER:-www-data}"
 WEB_GROUP="${WEB_GROUP:-www-data}"
@@ -129,6 +130,13 @@ mkdir -p /var/log/mk-auth
 
 echo "== Teste dry-run do conciliador =="
 "$PHP_BIN" "$JOB_DIR/conciliar_sicredi_desconto.php" --days=15 || true
+
+if [ "$RUN_CONCILIADOR_NOW" = "1" ]; then
+  echo "== Execucao inicial do conciliador =="
+  "$PHP_BIN" "$JOB_DIR/conciliar_sicredi_desconto.php" --days=15 --apply || true
+else
+  echo "Execucao inicial ignorada por RUN_CONCILIADOR_NOW=0"
+fi
 
 echo "== Instalacao concluida =="
 echo "Relatorio: /admin/addons/rel_conciliacao_sicredi/"

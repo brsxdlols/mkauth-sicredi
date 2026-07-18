@@ -53,6 +53,19 @@ function parseTituloEmpresa(?string $idTituloEmpresa): ?string
     return preg_match('/MKAUTH(\d+)/', $idTituloEmpresa, $m) ? $m[1] : null;
 }
 
+function uuid4(): string
+{
+    $data = random_bytes(16);
+    $data[6] = chr((ord($data[6]) & 0x0f) | 0x40);
+    $data[8] = chr((ord($data[8]) & 0x3f) | 0x80);
+    return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
+}
+
+function caixaHistorico(int $tituloId, string $login): string
+{
+    return "Recebimento do titulo {$tituloId} / {$login}";
+}
+
 $selectNotificacoes = $mysqli->prepare(
     "SELECT id, data, dados
        FROM sis_notificacoes
@@ -65,23 +78,22 @@ $selectNotificacoes->bind_param('i', $days);
 $selectNotificacoes->execute();
 $notificacoes = $selectNotificacoes->get_result();
 
-$selectTitulo = $mysqli->prepare(
+$selectTitulosPorEmpresa = $mysqli->prepare(
     "SELECT l.id, l.login, l.nossonum, l.status, l.datapag, l.valor, l.valorpag,
-            l.id_empresa, l.referencia, l.obs,
+            l.id_empresa, l.referencia, l.obs, l.coletor,
             c.nome, c.plano, c.desconto, c.acrescimo,
             p.valor AS valor_plano
        FROM sis_lanc l
        JOIN sis_cliente c ON c.login = l.login
   LEFT JOIN sis_plano p ON p.nome = c.plano
-      WHERE l.nossonum = ?
-        AND l.id_empresa = ?
+      WHERE l.id_empresa = ?
         AND l.deltitulo = 0
-      LIMIT 1"
+      ORDER BY l.id DESC"
 );
 
 $selectTitulosPorNosso = $mysqli->prepare(
     "SELECT l.id, l.login, l.nossonum, l.status, l.datapag, l.valor, l.valorpag,
-            l.id_empresa, l.referencia, l.obs,
+            l.id_empresa, l.referencia, l.obs, l.coletor,
             c.nome, c.plano, c.desconto, c.acrescimo,
             p.valor AS valor_plano
        FROM sis_lanc l
@@ -118,6 +130,62 @@ $updateNotificacao = $mysqli->prepare(
         AND resposta = 'REJEITADO'"
 );
 
+
+$selectCaixaTitulo = $mysqli->prepare(
+    "SELECT id
+       FROM sis_caixa
+      WHERE historico LIKE CONCAT('%titulo ', ?, ' /%')
+         OR historico LIKE CONCAT('%titulo ', ?, ' via%')
+         OR historico LIKE CONCAT('%titulo ', ?, ' no arq.%')
+      LIMIT 1"
+);
+
+$insertCaixa = $mysqli->prepare(
+    "INSERT INTO sis_caixa
+            (uuid_caixa, usuario, data, historico, complemento, entrada, saida, tipomov, planodecontas)
+     VALUES (?, 'sicrediapi', ?, ?, '', ?, 0.00, 'aut', 'Outros')"
+);
+
+$selectCaixaPendentes = $mysqli->prepare(
+    "SELECT l.id AS titulo_id, l.login, l.datapag, l.valorpag, l.coletor
+       FROM sis_lanc l
+      WHERE l.status = 'pago'
+        AND l.datapag IS NOT NULL
+        AND l.coletor = 'sicrediapi'
+        AND l.datapag >= DATE_SUB(NOW(), INTERVAL ? DAY)
+        AND l.deltitulo = 0
+        AND NOT EXISTS (
+            SELECT 1
+              FROM sis_caixa cx
+             WHERE cx.historico LIKE CONCAT('%titulo ', l.id, ' /%')
+                OR cx.historico LIKE CONCAT('%titulo ', l.id, ' via%')
+                OR cx.historico LIKE CONCAT('%titulo ', l.id, ' no arq.%')
+        )
+      ORDER BY l.datapag, l.id"
+);
+
+function caixaExiste(mysqli_stmt $stmt, int $tituloId): bool
+{
+    $stmt->bind_param('iii', $tituloId, $tituloId, $tituloId);
+    $stmt->execute();
+    return (bool) $stmt->get_result()->fetch_assoc();
+}
+
+function inserirCaixa(mysqli_stmt $selectStmt, mysqli_stmt $insertStmt, int $tituloId, string $login, string $data, float $valor): bool
+{
+    if (caixaExiste($selectStmt, $tituloId)) {
+        return false;
+    }
+    $uuid = uuid4();
+    $historico = caixaHistorico($tituloId, $login);
+    $insertStmt->bind_param('sssd', $uuid, $data, $historico, $valor);
+    $insertStmt->execute();
+    if ($insertStmt->affected_rows !== 1) {
+        throw new RuntimeException("caixa do titulo {$tituloId} nao inserido");
+    }
+    return true;
+}
+
 $candidatos = [];
 $ignorados = [];
 
@@ -143,13 +211,15 @@ while ($row = $notificacoes->fetch_assoc()) {
     }
 
     if ($idEmpresa) {
-        $selectTitulo->bind_param('ss', $nosso, $idEmpresa);
-        $selectTitulo->execute();
-        $titulo = $selectTitulo->get_result()->fetch_assoc();
-        if (!$titulo) {
-            $ignorados[] = "{$row['id']}: titulo nao encontrado para nosso=$nosso id_empresa=$idEmpresa";
+        $selectTitulosPorEmpresa->bind_param('s', $idEmpresa);
+        $selectTitulosPorEmpresa->execute();
+        $resultTitulos = $selectTitulosPorEmpresa->get_result();
+        $qtdTitulos = $resultTitulos->num_rows;
+        if ($qtdTitulos !== 1) {
+            $ignorados[] = "{$row['id']}: idTituloEmpresa=$idEmpresa encontrou $qtdTitulos titulo(s)";
             continue;
         }
+        $titulo = $resultTitulos->fetch_assoc();
     } else {
         $selectTitulosPorNosso->bind_param('s', $nosso);
         $selectTitulosPorNosso->execute();
@@ -190,6 +260,11 @@ while ($row = $notificacoes->fetch_assoc()) {
     }
 
     $jaPago = ($titulo['status'] === 'pago' || !empty($titulo['datapag']));
+    $coletor = strtolower(trim((string) ($titulo['coletor'] ?? '')));
+    if ($jaPago && strpos($coletor, 'retorno') !== false) {
+        $ignorados[] = "{$row['id']}: titulo {$titulo['id']} ja pago por arquivo de retorno";
+        continue;
+    }
     $respostaConciliada = $jaPago ? 'LIQUIDADO MANUAL CONCILIADO' : 'LIQUIDADO CONCILIADO';
 
     $candidatos[] = [
@@ -211,12 +286,28 @@ while ($row = $notificacoes->fetch_assoc()) {
         'referencia' => $titulo['referencia'],
         'ja_pago' => $jaPago,
         'resposta' => $respostaConciliada,
+        'caixa_historico' => caixaHistorico((int) $titulo['id'], (string) $titulo['login']),
+    ];
+}
+
+$caixaPendentes = [];
+$selectCaixaPendentes->bind_param('i', $days);
+$selectCaixaPendentes->execute();
+$resultCaixaPendentes = $selectCaixaPendentes->get_result();
+while ($row = $resultCaixaPendentes->fetch_assoc()) {
+    $caixaPendentes[] = [
+        'titulo_id' => (int) $row['titulo_id'],
+        'login' => (string) $row['login'],
+        'datapag' => (string) $row['datapag'],
+        'valor_pago' => money2($row['valorpag']),
+        'historico' => caixaHistorico((int) $row['titulo_id'], (string) $row['login']),
     ];
 }
 
 echo ($apply ? "MODO APLICACAO\n" : "MODO SIMULACAO\n");
 echo "Periodo analisado: {$days} dia(s)\n";
 echo "Candidatos aprovados: " . count($candidatos) . "\n";
+echo "Caixas pendentes: " . count($caixaPendentes) . "\n";
 foreach ($candidatos as $c) {
     echo sprintf(
         "#%d titulo=%d login=%s nosso=%s pago=%s liquido=%s venc/ref=%s data=%s movimento=%s acao=%s\n",
@@ -230,6 +321,16 @@ foreach ($candidatos as $c) {
         $c['datapag'],
         $c['movimento'],
         $c['ja_pago'] ? 'conciliar_manual' : 'baixar'
+    );
+}
+foreach ($caixaPendentes as $c) {
+    echo sprintf(
+        "caixa_pendente titulo=%d login=%s valor=%s data=%s historico=%s\n",
+        $c['titulo_id'],
+        $c['login'],
+        $c['valor_pago'],
+        $c['datapag'],
+        $c['historico']
     );
 }
 
@@ -256,6 +357,8 @@ try {
             }
         }
 
+        inserirCaixa($selectCaixaTitulo, $insertCaixa, $c['titulo_id'], $c['login'], $c['datapag'], (float) $c['valor_pago']);
+
         $notifId = $c['notif_id'];
         $resposta = $c['resposta'];
         $updateNotificacao->bind_param('si', $resposta, $notifId);
@@ -264,6 +367,10 @@ try {
             throw new RuntimeException("notificacao {$notifId} nao atualizada");
         }
     }
+    foreach ($caixaPendentes as $c) {
+        inserirCaixa($selectCaixaTitulo, $insertCaixa, $c['titulo_id'], $c['login'], $c['datapag'], (float) $c['valor_pago']);
+    }
+
     $mysqli->commit();
 } catch (Throwable $e) {
     $mysqli->rollback();
@@ -271,4 +378,4 @@ try {
     exit(3);
 }
 
-echo "Aplicado com sucesso: " . count($candidatos) . " baixa(s).\n";
+echo "Aplicado com sucesso: " . count($candidatos) . " baixa(s), " . count($caixaPendentes) . " caixa(s) corrigido(s).\n";
