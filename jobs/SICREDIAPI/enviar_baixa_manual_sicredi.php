@@ -328,7 +328,9 @@ $sql = "SELECT l.id, l.login, c.nome, l.nossonum, l.id_empresa, l.datavenc, l.pr
            AND l.valorpag > 0
            AND LOWER(IFNULL(l.coletor, '')) NOT LIKE '%sicrediapi%'
            AND LOWER(IFNULL(l.coletor, '')) NOT LIKE '%retorno%'
+           AND LOWER(TRIM(IFNULL(l.coletor, ''))) NOT IN ('api', 'mk-bot')
            AND LOWER(IFNULL(l.formapag, '')) NOT LIKE '%boleto%'
+           AND LOWER(IFNULL(l.formapag, '')) NOT LIKE 'liquidado%'
            " . ($hasLogTable ? "AND (bl.id IS NULL OR bl.status IN ('ERRO', 'PENDENTE'))" : "") . "
          ORDER BY l.datapag ASC, l.id ASC
          LIMIT ?";
