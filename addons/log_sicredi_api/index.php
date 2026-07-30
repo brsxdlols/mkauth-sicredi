@@ -89,7 +89,7 @@ $search = trim($_GET['busca'] ?? '');
 
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $start)) $start = date('Y-m-d', strtotime('-7 days'));
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $end)) $end = $today;
-if (!in_array($status, ['todos', 'erros', 'liquidados', 'conciliados'], true)) $status = 'todos';
+if (!in_array($status, ['todos', 'erros', 'liquidados', 'conciliados', 'manuais'], true)) $status = 'todos';
 
 $where = "servico = 'sicredi' AND data BETWEEN ? AND ?";
 $params = [$start . ' 00:00:00', $end . ' 23:59:59'];
@@ -101,6 +101,8 @@ if ($status === 'erros') {
     $where .= " AND resposta LIKE 'LIQUIDADO%'";
 } elseif ($status === 'conciliados') {
     $where .= " AND resposta LIKE '%CONCILIADO%'";
+} elseif ($status === 'manuais') {
+    $where .= " AND resposta LIKE 'BAIXA MANUAL%'";
 }
 
 if ($search !== '') {
@@ -136,9 +138,10 @@ while ($row = mysqli_fetch_assoc($result)) {
     $rows[] = $row;
     $total++;
 
-    if (strpos((string) $row['resposta'], 'LIQUIDADO') === 0) $liquidados++;
+    $isBaixaManualOk = strpos((string) $row['resposta'], 'BAIXA MANUAL ENVIADA') === 0 || strpos((string) $row['resposta'], 'BAIXA MANUAL JA RESOLVIDA') === 0;
+    if (strpos((string) $row['resposta'], 'LIQUIDADO') === 0 || $isBaixaManualOk) $liquidados++;
     if (strpos((string) $row['resposta'], 'CONCILIADO') !== false) $conciliados++;
-    if (strpos((string) $row['resposta'], 'LIQUIDADO') !== 0) $erros++;
+    if (strpos((string) $row['resposta'], 'LIQUIDADO') !== 0 && !$isBaixaManualOk) $erros++;
 }
 ?>
 <div class="wrap">
@@ -147,7 +150,7 @@ while ($row = mysqli_fetch_assoc($result)) {
             <img class="sicredi-logo" src="sicredi-logo.svg" alt="Sicredi">
             <div>
                 <h1>Sicredi API - Logs</h1>
-                <div class="muted">Webhooks recebidos, respostas do MK Auth e payload completo para troubleshooting.</div>
+                <div class="muted">Webhooks recebidos, pedidos de baixa enviados ao Sicredi e payload completo para troubleshooting.</div>
             </div>
         </div>
         <div class="no-print">
@@ -172,6 +175,7 @@ while ($row = mysqli_fetch_assoc($result)) {
                 <option value="todos" <?php echo $status === 'todos' ? 'selected' : ''; ?>>Todos</option>
                 <option value="liquidados" <?php echo $status === 'liquidados' ? 'selected' : ''; ?>>Liquidados</option>
                 <option value="conciliados" <?php echo $status === 'conciliados' ? 'selected' : ''; ?>>Conciliados</option>
+                <option value="manuais" <?php echo $status === 'manuais' ? 'selected' : ''; ?>>Baixas manuais</option>
             </select>
         </div>
         <div class="field">
@@ -214,7 +218,8 @@ while ($row = mysqli_fetch_assoc($result)) {
                 foreach ($rows as $row) {
                     $payload = $row['payload'];
                     $resposta = (string) $row['resposta'];
-                    $badgeClass = strpos($resposta, 'CONCILIADO') !== false ? 'badge warn' : (strpos($resposta, 'LIQUIDADO') === 0 ? 'badge ok' : 'badge err');
+                    $baixaManualOk = strpos($resposta, 'BAIXA MANUAL ENVIADA') === 0 || strpos($resposta, 'BAIXA MANUAL JA RESOLVIDA') === 0;
+                    $badgeClass = strpos($resposta, 'CONCILIADO') !== false ? 'badge warn' : ((strpos($resposta, 'LIQUIDADO') === 0 || $baixaManualOk) ? 'badge ok' : 'badge err');
                     $nosso = payload_value($payload, 'nossoNumero');
                     $movimento = payload_value($payload, 'movimento');
                     $valor = payload_value($payload, 'valorLiquidacao');

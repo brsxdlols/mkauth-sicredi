@@ -8,6 +8,8 @@ DB_PASS="${MKAUTH_DB_PASS:-vertrigo}"
 DB_NAME="${MKAUTH_DB_NAME:-mkradius}"
 INSTALL_CRON="${INSTALL_CRON:-1}"
 RUN_CONCILIADOR_NOW="${RUN_CONCILIADOR_NOW:-1}"
+ENABLE_BAIXA_MANUAL_SICREDI="${ENABLE_BAIXA_MANUAL_SICREDI:-0}"
+RUN_BAIXA_MANUAL_NOW="${RUN_BAIXA_MANUAL_NOW:-0}"
 PHP_BIN="${PHP_BIN:-/opt/php8/bin/php}"
 WEB_USER="${WEB_USER:-www-data}"
 WEB_GROUP="${WEB_GROUP:-www-data}"
@@ -31,7 +33,7 @@ if [ ! -d "$MKAUTH_DIR" ]; then
   exit 1
 fi
 
-if [ ! -d "$ROOT_DIR/addons/rel_conciliacao_sicredi" ] || [ ! -f "$ROOT_DIR/jobs/SICREDIAPI/conciliar_sicredi_desconto.php" ]; then
+if [ ! -d "$ROOT_DIR/addons/rel_conciliacao_sicredi" ] || [ ! -f "$ROOT_DIR/jobs/SICREDIAPI/conciliar_sicredi_desconto.php" ] || [ ! -f "$ROOT_DIR/jobs/SICREDIAPI/enviar_baixa_manual_sicredi.php" ]; then
   echo "Arquivos do instalador nao encontrados em $ROOT_DIR." >&2
   echo "Use o bootstrap via curl:" >&2
   echo "curl -fsSL https://raw.githubusercontent.com/brsxdlols/mkauth-sicredi/main/installers/github-install.sh | sudo bash" >&2
@@ -53,6 +55,8 @@ cp -a "$ROOT_DIR/addons/rel_conciliacao_sicredi/." "$ADMIN_ADDONS/rel_conciliaca
 cp -a "$ROOT_DIR/addons/log_sicredi_api/." "$ADMIN_ADDONS/log_sicredi_api/"
 cp -a "$ROOT_DIR/jobs/SICREDIAPI/conciliar_sicredi_desconto.php" "$JOB_DIR/conciliar_sicredi_desconto.php"
 cp -a "$ROOT_DIR/jobs/SICREDIAPI/run_conciliar_sicredi_desconto.sh" "$JOB_DIR/run_conciliar_sicredi_desconto.sh"
+cp -a "$ROOT_DIR/jobs/SICREDIAPI/enviar_baixa_manual_sicredi.php" "$JOB_DIR/enviar_baixa_manual_sicredi.php"
+cp -a "$ROOT_DIR/jobs/SICREDIAPI/run_enviar_baixa_manual_sicredi.sh" "$JOB_DIR/run_enviar_baixa_manual_sicredi.sh"
 
 # Ajusta credenciais do banco no job, mantendo padrao se variaveis nao forem informadas.
 escape_sed() {
@@ -66,6 +70,10 @@ sed -i "s/const DB_HOST = '.*';/const DB_HOST = '$DB_HOST_ESC';/" "$JOB_DIR/conc
 sed -i "s/const DB_USER = '.*';/const DB_USER = '$DB_USER_ESC';/" "$JOB_DIR/conciliar_sicredi_desconto.php"
 sed -i "s/const DB_PASS = '.*';/const DB_PASS = '$DB_PASS_ESC';/" "$JOB_DIR/conciliar_sicredi_desconto.php"
 sed -i "s/const DB_NAME = '.*';/const DB_NAME = '$DB_NAME_ESC';/" "$JOB_DIR/conciliar_sicredi_desconto.php"
+sed -i "s/const DB_HOST = '.*';/const DB_HOST = '$DB_HOST_ESC';/" "$JOB_DIR/enviar_baixa_manual_sicredi.php"
+sed -i "s/const DB_USER = '.*';/const DB_USER = '$DB_USER_ESC';/" "$JOB_DIR/enviar_baixa_manual_sicredi.php"
+sed -i "s/const DB_PASS = '.*';/const DB_PASS = '$DB_PASS_ESC';/" "$JOB_DIR/enviar_baixa_manual_sicredi.php"
+sed -i "s/const DB_NAME = '.*';/const DB_NAME = '$DB_NAME_ESC';/" "$JOB_DIR/enviar_baixa_manual_sicredi.php"
 
 # addons.class.php compatibilidade entre versoes do MK Auth.
 for addon in rel_conciliacao_sicredi log_sicredi_api; do
@@ -107,7 +115,7 @@ install_menu_lines() {
 
 install_menu_lines
 
-chmod +x "$JOB_DIR/conciliar_sicredi_desconto.php" "$JOB_DIR/run_conciliar_sicredi_desconto.sh"
+chmod +x "$JOB_DIR/conciliar_sicredi_desconto.php" "$JOB_DIR/run_conciliar_sicredi_desconto.sh" "$JOB_DIR/enviar_baixa_manual_sicredi.php" "$JOB_DIR/run_enviar_baixa_manual_sicredi.sh"
 chown -R "$WEB_USER:$WEB_GROUP" "$ADMIN_ADDONS/rel_conciliacao_sicredi" "$ADMIN_ADDONS/log_sicredi_api" || true
 find "$ADMIN_ADDONS/rel_conciliacao_sicredi" "$ADMIN_ADDONS/log_sicredi_api" -type f -exec chmod 640 {} \;
 find "$ADMIN_ADDONS/rel_conciliacao_sicredi" "$ADMIN_ADDONS/log_sicredi_api" -type d -exec chmod 750 {} \;
@@ -115,6 +123,7 @@ find "$ADMIN_ADDONS/rel_conciliacao_sicredi" "$ADMIN_ADDONS/log_sicredi_api" -ty
 "$PHP_BIN" -l "$ADMIN_ADDONS/rel_conciliacao_sicredi/index.php"
 "$PHP_BIN" -l "$ADMIN_ADDONS/log_sicredi_api/index.php"
 "$PHP_BIN" -l "$JOB_DIR/conciliar_sicredi_desconto.php"
+"$PHP_BIN" -l "$JOB_DIR/enviar_baixa_manual_sicredi.php"
 
 if [ "$INSTALL_CRON" = "1" ]; then
   cat > /etc/cron.d/conciliar_sicredi_desconto <<CRON
@@ -122,6 +131,17 @@ if [ "$INSTALL_CRON" = "1" ]; then
 CRON
   chmod 644 /etc/cron.d/conciliar_sicredi_desconto
   echo "Cron instalado: /etc/cron.d/conciliar_sicredi_desconto"
+
+  if [ "$ENABLE_BAIXA_MANUAL_SICREDI" = "1" ]; then
+    cat > /etc/cron.d/enviar_baixa_manual_sicredi <<CRON
+*/10 * * * * root $JOB_DIR/run_enviar_baixa_manual_sicredi.sh
+CRON
+    chmod 644 /etc/cron.d/enviar_baixa_manual_sicredi
+    echo "Cron instalado: /etc/cron.d/enviar_baixa_manual_sicredi"
+  else
+    rm -f /etc/cron.d/enviar_baixa_manual_sicredi
+    echo "Cron de baixa manual Sicredi nao ativado. Use ENABLE_BAIXA_MANUAL_SICREDI=1 para ativar."
+  fi
 else
   echo "Cron ignorado por INSTALL_CRON=0"
 fi
@@ -130,6 +150,8 @@ mkdir -p /var/log/mk-auth
 
 echo "== Teste dry-run do conciliador =="
 "$PHP_BIN" "$JOB_DIR/conciliar_sicredi_desconto.php" --days=15 || true
+echo "== Teste dry-run da baixa manual Sicredi =="
+"$PHP_BIN" "$JOB_DIR/enviar_baixa_manual_sicredi.php" --days=15 --limit=20 || true
 
 if [ "$RUN_CONCILIADOR_NOW" = "1" ]; then
   echo "== Execucao inicial do conciliador =="
@@ -138,7 +160,15 @@ else
   echo "Execucao inicial ignorada por RUN_CONCILIADOR_NOW=0"
 fi
 
+if [ "$RUN_BAIXA_MANUAL_NOW" = "1" ]; then
+  echo "== Execucao inicial da baixa manual Sicredi =="
+  "$PHP_BIN" "$JOB_DIR/enviar_baixa_manual_sicredi.php" --days=15 --limit=20 --apply || true
+else
+  echo "Baixa manual Sicredi nao enviada agora. Use RUN_BAIXA_MANUAL_NOW=1 para aplicar na instalacao."
+fi
+
 echo "== Instalacao concluida =="
 echo "Relatorio: /admin/addons/rel_conciliacao_sicredi/"
 echo "Logs:      /admin/addons/log_sicredi_api/"
+echo "Baixa manual: $JOB_DIR/enviar_baixa_manual_sicredi.php"
 echo "Menu: use Ctrl+F5 no navegador se nao aparecer imediatamente."

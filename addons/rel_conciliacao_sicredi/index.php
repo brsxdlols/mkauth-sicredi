@@ -107,7 +107,7 @@ $order = $_GET['ordem'] ?? 'data_desc';
 
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $start)) $start = date('Y-m-01');
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $end)) $end = $today;
-if (!in_array($origin, ['todas', 'conciliadas', 'nativas'], true)) $origin = 'todas';
+if (!in_array($origin, ['todas', 'conciliadas', 'nativas', 'manuais'], true)) $origin = 'todas';
 
 $orderSql = $order === 'data_asc'
     ? 'DATE(MAX(n.data)) ASC, MAX(n.data) ASC, l.id ASC'
@@ -121,6 +121,7 @@ $where = "n.servico = 'sicredi'
               n.resposta LIKE 'LIQUIDADO%'
               OR n.resposta = 'BAIXADO'
               OR n.resposta = 'LIQUIDADO CONCILIADO'
+              OR n.resposta LIKE 'BAIXA MANUAL%'
           )";
 $params = [$start . ' 00:00:00', $end . ' 23:59:59'];
 $types = 'ss';
@@ -128,7 +129,9 @@ $types = 'ss';
 if ($origin === 'conciliadas') {
     $where .= " AND n.resposta LIKE '%CONCILIADO%'";
 } elseif ($origin === 'nativas') {
-    $where .= " AND n.resposta NOT LIKE '%CONCILIADO%'";
+    $where .= " AND n.resposta NOT LIKE '%CONCILIADO%' AND n.resposta NOT LIKE 'BAIXA MANUAL%'";
+} elseif ($origin === 'manuais') {
+    $where .= " AND n.resposta LIKE 'BAIXA MANUAL%'";
 }
 
 if ($search !== '') {
@@ -204,7 +207,7 @@ while ($row = mysqli_fetch_assoc($result)) {
             <img class="sicredi-logo" src="sicredi-logo.svg" alt="Sicredi">
             <div>
                 <h1>Baixas Sicredi API</h1>
-                <div class="muted">Relatorio por data das baixas recebidas pela integracao Sicredi, incluindo conciliacao de desconto.</div>
+                <div class="muted">Relatorio por data das baixas recebidas e enviadas pela integracao Sicredi, incluindo conciliacao de desconto.</div>
             </div>
         </div>
         <div class="no-print">
@@ -229,6 +232,7 @@ while ($row = mysqli_fetch_assoc($result)) {
                 <option value="todas" <?php echo $origin === 'todas' ? 'selected' : ''; ?>>Todas da API</option>
                 <option value="conciliadas" <?php echo $origin === 'conciliadas' ? 'selected' : ''; ?>>Conciliadas</option>
                 <option value="nativas" <?php echo $origin === 'nativas' ? 'selected' : ''; ?>>Nativas Sicredi</option>
+                <option value="manuais" <?php echo $origin === 'manuais' ? 'selected' : ''; ?>>Manuais enviadas</option>
             </select>
         </div>
         <div class="field">
