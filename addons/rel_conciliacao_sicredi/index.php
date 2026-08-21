@@ -109,95 +109,207 @@ if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $start)) $start = date('Y-m-01');
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $end)) $end = $today;
 if (!in_array($origin, ['todas', 'conciliadas', 'nativas', 'manuais'], true)) $origin = 'todas';
 
-$orderSql = $order === 'data_asc'
-    ? 'DATE(MAX(n.data)) ASC, MAX(n.data) ASC, l.id ASC'
-    : 'DATE(MAX(n.data)) DESC, MAX(n.data) DESC, l.id DESC';
+function sicredi_payload_value($dados, $field)
+{
+    $payload = json_decode((string) $dados, true);
+    if (is_array($payload) && isset($payload[$field])) {
+        return is_scalar($payload[$field]) ? (string) $payload[$field] : '';
+    }
 
-$where = "n.servico = 'sicredi'
-          AND l.status = 'pago'
-          AND LOWER(IFNULL(l.coletor, '')) NOT LIKE '%retorno%'
-          AND n.data BETWEEN ? AND ?
+    if (preg_match('/"' . preg_quote($field, '/') . '"\s*:\s*"?([^",}\]]+)/', (string) $dados, $m)) {
+        return trim($m[1]);
+    }
+
+    return '';
+}
+
+function sicredi_titulo_empresa_id($dados)
+{
+    $idTituloEmpresa = sicredi_payload_value($dados, 'idTituloEmpresa');
+    return preg_match('/MKAUTH(\d+)/', $idTituloEmpresa, $m) ? $m[1] : '';
+}
+
+function sicredi_nosso_numero($dados)
+{
+    return preg_replace('/\D+/', '', sicredi_payload_value($dados, 'nossoNumero'));
+}
+
+function sql_placeholders($count)
+{
+    return implode(',', array_fill(0, $count, '?'));
+}
+
+$where = "servico = 'sicredi'
+          AND data BETWEEN ? AND ?
           AND (
-              n.resposta LIKE 'LIQUIDADO%'
-              OR n.resposta = 'BAIXADO'
-              OR n.resposta = 'LIQUIDADO CONCILIADO'
-              OR n.resposta LIKE 'BAIXA MANUAL%'
+              resposta LIKE 'LIQUIDADO%'
+              OR resposta = 'BAIXADO'
+              OR resposta = 'LIQUIDADO CONCILIADO'
+              OR resposta LIKE 'BAIXA MANUAL%'
           )";
 $params = [$start . ' 00:00:00', $end . ' 23:59:59'];
 $types = 'ss';
 
 if ($origin === 'conciliadas') {
-    $where .= " AND n.resposta LIKE '%CONCILIADO%'";
+    $where .= " AND resposta LIKE '%CONCILIADO%'";
 } elseif ($origin === 'nativas') {
-    $where .= " AND n.resposta NOT LIKE '%CONCILIADO%' AND n.resposta NOT LIKE 'BAIXA MANUAL%'";
+    $where .= " AND resposta NOT LIKE '%CONCILIADO%' AND resposta NOT LIKE 'BAIXA MANUAL%'";
 } elseif ($origin === 'manuais') {
-    $where .= " AND n.resposta LIKE 'BAIXA MANUAL%'";
+    $where .= " AND resposta LIKE 'BAIXA MANUAL%'";
 }
 
-if ($search !== '') {
-    $where .= " AND (l.login LIKE ? OR c.nome LIKE ? OR l.id LIKE ? OR l.nossonum LIKE ? OR l.recibo LIKE ?)";
-    $like = '%' . $search . '%';
-    array_push($params, $like, $like, $like, $like, $like);
-    $types .= 'sssss';
-}
-
-$sql = "SELECT
-            MAX(n.id) AS notificacao_id,
-            MAX(n.data) AS data_notificacao,
-            MAX(n.data) AS data_relatorio,
-            GROUP_CONCAT(DISTINCT n.resposta ORDER BY n.id SEPARATOR ', ') AS respostas_api,
-            l.id AS titulo,
-            l.login,
-            c.nome,
-            c.uuid_cliente,
-            l.nossonum,
-            l.id_empresa,
-            l.datavenc,
-            l.processamento,
-            l.datapag,
-            l.valor,
-            l.valorpag,
-            c.desconto,
-            c.acrescimo,
-            l.recibo,
-            l.referencia,
-            l.obs,
-            l.formapag,
-            l.coletor
-        FROM sis_notificacoes n
-        JOIN sis_lanc l
-          ON (
-              (
-                  n.dados LIKE '%\"idTituloEmpresa\"%'
-                  AND l.id_empresa = REPLACE(SUBSTRING_INDEX(SUBSTRING_INDEX(n.dados, '\"idTituloEmpresa\":\"MKAUTH', -1), 'G', 1), 'P', '')
-              )
-              OR (
-                  n.dados NOT LIKE '%\"idTituloEmpresa\"%'
-                  AND l.nossonum = SUBSTRING_INDEX(SUBSTRING_INDEX(n.dados, '\"nossoNumero\":\"', -1), '\"', 1)
-              )
-          )
-        LEFT JOIN sis_cliente c ON c.login = l.login
+$sql = "SELECT id, data, dados, resposta
+        FROM sis_notificacoes
         WHERE $where
-        GROUP BY l.id
-        ORDER BY $orderSql";
+        ORDER BY data DESC, id DESC";
 
 $stmt = mysqli_prepare($link, $sql);
 mysqli_stmt_bind_param($stmt, $types, ...$params);
 mysqli_stmt_execute($stmt);
 $result = mysqli_stmt_get_result($stmt);
 
+$eventsByEmpresa = [];
+$eventsByNosso = [];
+while ($event = mysqli_fetch_assoc($result)) {
+    $event['id_empresa_match'] = sicredi_titulo_empresa_id($event['dados']);
+    $event['nosso_match'] = sicredi_nosso_numero($event['dados']);
+
+    if ($event['id_empresa_match'] !== '') {
+        $eventsByEmpresa[$event['id_empresa_match']][] = $event;
+    }
+
+    if ($event['nosso_match'] !== '') {
+        $eventsByNosso[$event['nosso_match']][] = $event;
+    }
+}
+
 $rows = [];
 $total = 0.0;
 $clientes = [];
 $dias = [];
 $conciliadas = 0;
-while ($row = mysqli_fetch_assoc($result)) {
-    $rows[] = $row;
-    $total += (float) $row['valorpag'];
-    $clientes[$row['login']] = true;
-    $dias[substr($row['data_relatorio'], 0, 10)] = true;
-    if (strpos((string) $row['respostas_api'], 'CONCILIADO') !== false) {
-        $conciliadas++;
+
+$idEmpresas = array_keys($eventsByEmpresa);
+$nossos = array_keys($eventsByNosso);
+
+if ($idEmpresas || $nossos) {
+    $titleWhere = ["l.status = 'pago'", "LOWER(IFNULL(l.coletor, '')) NOT LIKE '%retorno%'"];
+    $titleParams = [];
+    $titleTypes = '';
+    $matchParts = [];
+
+    if ($idEmpresas) {
+        $matchParts[] = 'l.id_empresa IN (' . sql_placeholders(count($idEmpresas)) . ')';
+        foreach ($idEmpresas as $idEmpresa) {
+            $titleParams[] = $idEmpresa;
+            $titleTypes .= 's';
+        }
+    }
+
+    if ($nossos) {
+        $matchParts[] = 'l.nossonum IN (' . sql_placeholders(count($nossos)) . ')';
+        foreach ($nossos as $nosso) {
+            $titleParams[] = $nosso;
+            $titleTypes .= 's';
+        }
+    }
+
+    $titleWhere[] = '(' . implode(' OR ', $matchParts) . ')';
+    $titleSql = "SELECT
+                    l.id AS titulo,
+                    l.login,
+                    c.nome,
+                    c.uuid_cliente,
+                    l.nossonum,
+                    l.id_empresa,
+                    l.datavenc,
+                    l.processamento,
+                    l.datapag,
+                    l.valor,
+                    l.valorpag,
+                    c.desconto,
+                    c.acrescimo,
+                    l.recibo,
+                    l.referencia,
+                    l.obs,
+                    l.formapag,
+                    l.coletor
+                FROM sis_lanc l
+                LEFT JOIN sis_cliente c ON c.login = l.login
+                WHERE " . implode(' AND ', $titleWhere);
+    $titleStmt = mysqli_prepare($link, $titleSql);
+    mysqli_stmt_bind_param($titleStmt, $titleTypes, ...$titleParams);
+    mysqli_stmt_execute($titleStmt);
+    $titleResult = mysqli_stmt_get_result($titleStmt);
+
+    $searchNeedle = $search !== '' ? strtolower($search) : '';
+    while ($title = mysqli_fetch_assoc($titleResult)) {
+        $matchedEvents = [];
+        if ((string) $title['id_empresa'] !== '' && isset($eventsByEmpresa[(string) $title['id_empresa']])) {
+            $matchedEvents = array_merge($matchedEvents, $eventsByEmpresa[(string) $title['id_empresa']]);
+        }
+        if ((string) $title['nossonum'] !== '' && isset($eventsByNosso[(string) $title['nossonum']])) {
+            $matchedEvents = array_merge($matchedEvents, $eventsByNosso[(string) $title['nossonum']]);
+        }
+
+        $uniqueEvents = [];
+        foreach ($matchedEvents as $event) {
+            $uniqueEvents[(int) $event['id']] = $event;
+        }
+        if (!$uniqueEvents) {
+            continue;
+        }
+
+        if ($searchNeedle !== '') {
+            $haystack = strtolower(implode(' ', [
+                $title['titulo'],
+                $title['login'],
+                $title['nome'],
+                $title['nossonum'],
+                $title['recibo'],
+                $title['id_empresa'],
+            ]));
+            if (strpos($haystack, $searchNeedle) === false) {
+                continue;
+            }
+        }
+
+        $maxId = 0;
+        $maxData = '';
+        $respostas = [];
+        foreach ($uniqueEvents as $event) {
+            if ((int) $event['id'] > $maxId) {
+                $maxId = (int) $event['id'];
+            }
+            if ($maxData === '' || strcmp((string) $event['data'], $maxData) > 0) {
+                $maxData = (string) $event['data'];
+            }
+            $respostas[(string) $event['resposta']] = true;
+        }
+
+        $row = $title;
+        $row['notificacao_id'] = $maxId;
+        $row['data_notificacao'] = $maxData;
+        $row['data_relatorio'] = $maxData;
+        $row['respostas_api'] = implode(', ', array_keys($respostas));
+        $rows[] = $row;
+    }
+
+    usort($rows, function ($a, $b) use ($order) {
+        $cmp = strcmp((string) $a['data_relatorio'], (string) $b['data_relatorio']);
+        if ($cmp === 0) {
+            $cmp = ((int) $a['titulo']) <=> ((int) $b['titulo']);
+        }
+        return $order === 'data_asc' ? $cmp : -$cmp;
+    });
+
+    foreach ($rows as $row) {
+        $total += (float) $row['valorpag'];
+        $clientes[$row['login']] = true;
+        $dias[substr($row['data_relatorio'], 0, 10)] = true;
+        if (strpos((string) $row['respostas_api'], 'CONCILIADO') !== false) {
+            $conciliadas++;
+        }
     }
 }
 ?>
