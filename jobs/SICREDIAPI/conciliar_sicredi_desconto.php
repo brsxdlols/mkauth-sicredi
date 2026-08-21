@@ -187,6 +187,7 @@ function inserirCaixa(mysqli_stmt $selectStmt, mysqli_stmt $insertStmt, int $tit
 }
 
 $candidatos = [];
+$candidatosPorTitulo = [];
 $ignorados = [];
 
 while ($row = $notificacoes->fetch_assoc()) {
@@ -267,9 +268,19 @@ while ($row = $notificacoes->fetch_assoc()) {
     }
     $respostaConciliada = $jaPago ? 'LIQUIDADO MANUAL CONCILIADO' : 'LIQUIDADO CONCILIADO';
 
+    $tituloId = (int) $titulo['id'];
+    if (isset($candidatosPorTitulo[$tituloId])) {
+        $idx = $candidatosPorTitulo[$tituloId];
+        $candidatos[$idx]['notif_ids'][] = (int) $row['id'];
+        $ignorados[] = "{$row['id']}: webhook duplicado do titulo {$tituloId}, sera conciliado junto com #{$candidatos[$idx]['notif_id']}";
+        continue;
+    }
+
+    $candidatosPorTitulo[$tituloId] = count($candidatos);
     $candidatos[] = [
         'notif_id' => (int) $row['id'],
-        'titulo_id' => (int) $titulo['id'],
+        'notif_ids' => [(int) $row['id']],
+        'titulo_id' => $tituloId,
         'login' => $titulo['login'],
         'nome' => $titulo['nome'],
         'nosso' => $nosso,
@@ -359,12 +370,13 @@ try {
 
         inserirCaixa($selectCaixaTitulo, $insertCaixa, $c['titulo_id'], $c['login'], $c['datapag'], (float) $c['valor_pago']);
 
-        $notifId = $c['notif_id'];
         $resposta = $c['resposta'];
-        $updateNotificacao->bind_param('si', $resposta, $notifId);
-        $updateNotificacao->execute();
-        if ($updateNotificacao->affected_rows !== 1) {
-            throw new RuntimeException("notificacao {$notifId} nao atualizada");
+        foreach ($c['notif_ids'] as $notifId) {
+            $updateNotificacao->bind_param('si', $resposta, $notifId);
+            $updateNotificacao->execute();
+            if ($updateNotificacao->affected_rows !== 1) {
+                throw new RuntimeException("notificacao {$notifId} nao atualizada");
+            }
         }
     }
     foreach ($caixaPendentes as $c) {

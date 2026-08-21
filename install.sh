@@ -148,6 +148,25 @@ fi
 
 mkdir -p /var/log/mk-auth
 
+if command -v mysql >/dev/null 2>&1; then
+  mysql -h "$DB_HOST" -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" -e "
+    SET @idx := (
+      SELECT COUNT(1)
+        FROM information_schema.STATISTICS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'sis_notificacoes'
+         AND INDEX_NAME = 'idx_sicredi_data_resposta'
+    );
+    SET @sql := IF(@idx = 0,
+      'ALTER TABLE sis_notificacoes ADD INDEX idx_sicredi_data_resposta (servico, data, resposta)',
+      'SELECT 1'
+    );
+    PREPARE stmt FROM @sql;
+    EXECUTE stmt;
+    DEALLOCATE PREPARE stmt;
+  " >/dev/null 2>&1 || echo "Aviso: nao foi possivel criar indice idx_sicredi_data_resposta"
+fi
+
 echo "== Teste dry-run do conciliador =="
 "$PHP_BIN" "$JOB_DIR/conciliar_sicredi_desconto.php" --days=15 || true
 echo "== Teste dry-run da baixa manual Sicredi =="
