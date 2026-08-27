@@ -255,7 +255,13 @@ while ($row = $notificacoes->fetch_assoc()) {
         abs((float) $valorPrincipalPago - (float) $valorPlanoLiquido) <= 0.01 ||
         abs((float) $valorPrincipalPago - (float) $valorBase) <= 0.01
     );
-    if (!$valorAceito) {
+    $vinculoForte = (
+        $idEmpresa !== null &&
+        (string) $titulo['id_empresa'] === (string) $idEmpresa &&
+        preg_replace('/\D+/', '', (string) $titulo['nossonum']) === preg_replace('/\D+/', '', $nosso)
+    );
+    $valorDivergenteComVinculo = (!$valorAceito && $vinculoForte);
+    if (!$valorAceito && !$valorDivergenteComVinculo) {
         $ignorados[] = "{$row['id']}: valor nao confere titulo={$titulo['id']} pago=$valorLiquidacao principal=$valorPrincipalPago liquido=$valorLiquidoCadastro plano_liquido=$valorPlanoLiquido";
         continue;
     }
@@ -266,7 +272,13 @@ while ($row = $notificacoes->fetch_assoc()) {
         $ignorados[] = "{$row['id']}: titulo {$titulo['id']} ja pago por arquivo de retorno";
         continue;
     }
-    $respostaConciliada = $jaPago ? 'LIQUIDADO MANUAL CONCILIADO' : 'LIQUIDADO CONCILIADO';
+    if ($valorDivergenteComVinculo) {
+        $respostaConciliada = $jaPago
+            ? 'LIQUIDADO MANUAL VALOR DIVERGENTE CONCILIADO'
+            : 'LIQUIDADO VALOR DIVERGENTE CONCILIADO';
+    } else {
+        $respostaConciliada = $jaPago ? 'LIQUIDADO MANUAL CONCILIADO' : 'LIQUIDADO CONCILIADO';
+    }
 
     $tituloId = (int) $titulo['id'];
     if (isset($candidatosPorTitulo[$tituloId])) {
@@ -292,6 +304,7 @@ while ($row = $notificacoes->fetch_assoc()) {
         'desconto' => money2($titulo['desconto']),
         'acrescimo' => money2($titulo['acrescimo']),
         'valor_liquido' => $valorLiquidoCadastro,
+        'valor_divergente' => $valorDivergenteComVinculo,
         'datapag' => eventDate($dados),
         'recibo' => (string) ($dados['idMovi'] ?? $dados['idEventoWebhook'] ?? ('sicredi-' . $row['id'])),
         'referencia' => $titulo['referencia'],
