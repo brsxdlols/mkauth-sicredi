@@ -32,7 +32,7 @@
         .btn { height: 36px; border: 0; border-radius: 4px; padding: 0 14px; cursor: pointer; font-weight: 700; }
         .btn-primary { background: var(--sicredi-green); color: #fff; }
         .btn-light { display: inline-flex; align-items: center; background: var(--sicredi-soft); color: var(--sicredi-dark); text-decoration: none; border: 1px solid var(--sicredi-border); }
-        .summary { display: grid; grid-template-columns: repeat(5, minmax(150px, 1fr)); gap: 10px; }
+        .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
         .metric { border: 1px solid var(--sicredi-border); border-radius: 6px; padding: 12px; background: #fbfefb; }
         .metric b { display: block; font-size: 21px; color: var(--sicredi-dark); line-height: 1.25; }
         .metric span { color: #59735d; font-size: 11px; text-transform: uppercase; font-weight: 700; }
@@ -185,6 +185,7 @@ while ($event = mysqli_fetch_assoc($result)) {
 
 $rows = [];
 $total = 0.0;
+$totalTarifa = 0.0;
 $clientes = [];
 $dias = [];
 $conciliadas = 0;
@@ -227,6 +228,7 @@ if ($idEmpresas || $nossos) {
                     l.datapag,
                     l.valor,
                     l.valorpag,
+                    l.tarifa_paga,
                     c.desconto,
                     c.acrescimo,
                     l.recibo,
@@ -305,6 +307,7 @@ if ($idEmpresas || $nossos) {
 
     foreach ($rows as $row) {
         $total += (float) $row['valorpag'];
+        $totalTarifa += (float) $row['tarifa_paga'];
         $clientes[$row['login']] = true;
         $dias[substr($row['data_relatorio'], 0, 10)] = true;
         if (strpos((string) $row['respostas_api'], 'CONCILIADO') !== false) {
@@ -369,6 +372,8 @@ if ($idEmpresas || $nossos) {
         <div class="metric"><span>Clientes</span><b><?php echo count($clientes); ?></b></div>
         <div class="metric"><span>Dias com baixa</span><b><?php echo count($dias); ?></b></div>
         <div class="metric"><span>Total baixado</span><b><?php echo money_br($total); ?></b></div>
+        <div class="metric"><span>Total tarifas</span><b><?php echo money_br($totalTarifa); ?></b></div>
+        <div class="metric"><span>Liquido caixa</span><b><?php echo money_br($total - $totalTarifa); ?></b></div>
     </div>
 
     <div class="panel">
@@ -396,20 +401,24 @@ if ($idEmpresas || $nossos) {
                 }
                 $currentDay = null;
                 $dayTotal = 0.0;
+                $dayTarifa = 0.0;
                 $dayCount = 0;
                 foreach ($rows as $row) {
                     $day = substr($row['data_relatorio'], 0, 10);
                     if ($currentDay !== $day) {
                         if ($currentDay !== null) {
-                            echo '<tr class="total-row"><td colspan="7">Total do dia ' . h(date_br($currentDay)) . '</td><td class="num">' . h(money_br($dayTotal)) . '</td><td colspan="3">' . $dayCount . ' baixa(s)</td></tr>';
+                            echo '<tr class="total-row"><td colspan="7">Total do dia ' . h(date_br($currentDay)) . '</td><td class="num">' . h(money_br($dayTotal)) . '<br><span class="muted">Tarifa: ' . h(money_br($dayTarifa)) . '</span></td><td colspan="3">' . h(money_br($dayTotal - $dayTarifa)) . ' liquido<br>' . $dayCount . ' baixa(s)</td></tr>';
                         }
                         $currentDay = $day;
                         $dayTotal = 0.0;
+                        $dayTarifa = 0.0;
                         $dayCount = 0;
                         echo '<tr class="date-row"><td colspan="11">' . h(date_br($day)) . '</td></tr>';
                     }
 
                     $dayTotal += (float) $row['valorpag'];
+                    $tarifa = (float) $row['tarifa_paga'];
+                    $dayTarifa += $tarifa;
                     $dayCount++;
                     $apiType = (string) $row['respostas_api'];
                     $badgeClass = strpos($apiType, 'CONCILIADO') !== false ? 'badge badge-warn' : 'badge badge-soft';
@@ -428,14 +437,18 @@ if ($idEmpresas || $nossos) {
                     echo '<td data-label="Referencia">' . h($row['referencia']) . '<br><span class="muted">' . h($row['obs']) . '</span><br><span class="muted"><b>Venc.</b> ' . h(date_br($row['datavenc'])) . ' &nbsp; <b>Lan&ccedil;:</b> ' . h(date_br($row['processamento'])) . '</span></td>';
                     echo '<td data-label="Valor titulo" class="num">' . h(money_br($row['valor'])) . '</td>';
                     echo '<td data-label="Desc." class="num">' . h(money_br($row['desconto'])) . '</td>';
-                    echo '<td data-label="Valor pago" class="num"><span class="badge">' . h(money_br($row['valorpag'])) . '</span></td>';
+                    echo '<td data-label="Valor pago" class="num"><span class="badge">' . h(money_br($row['valorpag'])) . '</span>';
+                    if ($tarifa > 0) {
+                        echo '<br><span class="muted">Tarifa: ' . h(money_br($tarifa)) . '</span><br><span class="muted">Liquido: ' . h(money_br((float) $row['valorpag'] - $tarifa)) . '</span>';
+                    }
+                    echo '</td>';
                     echo '<td data-label="Tipo API"><span class="' . h($badgeClass) . '">' . h($apiType) . '</span></td>';
                     echo '<td data-label="Recibo">' . h($row['recibo']) . '<br><span class="muted">' . h($row['coletor']) . '</span></td>';
                     echo '<td data-label="Notificacao"><a href="/admin/notificacao.hhvm?id=' . h($row['notificacao_id']) . '" target="_blank">#' . h($row['notificacao_id']) . '</a><br><span class="muted">' . h(date_br($row['data_notificacao'], true)) . '</span></td>';
                     echo '</tr>';
                 }
                 if ($currentDay !== null) {
-                    echo '<tr class="total-row"><td colspan="7">Total do dia ' . h(date_br($currentDay)) . '</td><td class="num">' . h(money_br($dayTotal)) . '</td><td colspan="3">' . $dayCount . ' baixa(s)</td></tr>';
+                    echo '<tr class="total-row"><td colspan="7">Total do dia ' . h(date_br($currentDay)) . '</td><td class="num">' . h(money_br($dayTotal)) . '<br><span class="muted">Tarifa: ' . h(money_br($dayTarifa)) . '</span></td><td colspan="3">' . h(money_br($dayTotal - $dayTarifa)) . ' liquido<br>' . $dayCount . ' baixa(s)</td></tr>';
                 }
                 ?>
                 </tbody>
