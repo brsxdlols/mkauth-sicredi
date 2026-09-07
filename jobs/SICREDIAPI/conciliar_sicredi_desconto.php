@@ -27,6 +27,8 @@ function money2($value): string
     return number_format((float) str_replace(',', '.', (string) $value), 2, '.', '');
 }
 
+$tarifaEntrada = money2(getenv('SICREDI_TARIFA_ENTRADA') ?: '0.99');
+
 function eventDate(array $dados): string
 {
     $raw = $dados['dataEvento'] ?? $dados['dataPrevisaoPagamento'] ?? null;
@@ -64,6 +66,11 @@ function uuid4(): string
 function caixaHistorico(int $tituloId, string $login): string
 {
     return "Recebimento do titulo {$tituloId} / {$login}";
+}
+
+function caixaTarifaHistorico(int $tituloId, string $login): string
+{
+    return "Tarifa Sicredi do titulo {$tituloId} / {$login}";
 }
 
 $selectNotificacoes = $mysqli->prepare(
@@ -113,7 +120,7 @@ $updateTitulo = $mysqli->prepare(
             valorpag = ?,
             formapag = 'boleto',
             num_recibos = 1,
-            tarifa_paga = 0.00,
+            tarifa_paga = ?,
             deltitulo = 0,
             datadel = NULL,
             num_retornos = IF(num_retornos = 0, 1, num_retornos),
@@ -121,6 +128,13 @@ $updateTitulo = $mysqli->prepare(
       WHERE id = ?
         AND status <> 'pago'
         AND datapag IS NULL"
+);
+
+$updateTarifaTitulo = $mysqli->prepare(
+    "UPDATE sis_lanc
+        SET tarifa_paga = ?
+      WHERE id = ?
+        AND (tarifa_paga IS NULL OR tarifa_paga = 0.00)"
 );
 
 $updateNotificacao = $mysqli->prepare(
@@ -146,20 +160,46 @@ $insertCaixa = $mysqli->prepare(
      VALUES (?, 'sicrediapi', ?, ?, '', ?, 0.00, 'aut', 'Outros')"
 );
 
+$selectCaixaTarifaTitulo = $mysqli->prepare(
+    "SELECT id
+       FROM sis_caixa
+      WHERE historico LIKE CONCAT('%Tarifa Sicredi do titulo ', ?, ' /%')
+         OR historico LIKE CONCAT('%Tarifa titulo ', ?, ' via%')
+         OR historico LIKE CONCAT('%Tarifa titulo ', ?, ' no arq.%')
+      LIMIT 1"
+);
+
+$insertCaixaTarifa = $mysqli->prepare(
+    "INSERT INTO sis_caixa
+            (uuid_caixa, usuario, data, historico, complemento, entrada, saida, tipomov, planodecontas)
+     VALUES (?, 'sicrediapi', ?, ?, '', 0.00, ?, 'aut', 'Outros')"
+);
+
 $selectCaixaPendentes = $mysqli->prepare(
-    "SELECT l.id AS titulo_id, l.login, l.datapag, l.valorpag, l.coletor
+    "SELECT l.id AS titulo_id, l.login, l.datapag, l.valorpag, l.tarifa_paga, l.coletor
        FROM sis_lanc l
       WHERE l.status = 'pago'
         AND l.datapag IS NOT NULL
         AND l.coletor = 'sicrediapi'
         AND l.datapag >= DATE_SUB(NOW(), INTERVAL ? DAY)
         AND l.deltitulo = 0
-        AND NOT EXISTS (
-            SELECT 1
-              FROM sis_caixa cx
-             WHERE cx.historico LIKE CONCAT('%titulo ', l.id, ' /%')
-                OR cx.historico LIKE CONCAT('%titulo ', l.id, ' via%')
-                OR cx.historico LIKE CONCAT('%titulo ', l.id, ' no arq.%')
+        AND (
+            l.tarifa_paga IS NULL
+            OR l.tarifa_paga = 0.00
+            OR NOT EXISTS (
+                SELECT 1
+                  FROM sis_caixa cx
+                 WHERE cx.historico LIKE CONCAT('%titulo ', l.id, ' /%')
+                    OR cx.historico LIKE CONCAT('%titulo ', l.id, ' via%')
+                    OR cx.historico LIKE CONCAT('%titulo ', l.id, ' no arq.%')
+            )
+            OR NOT EXISTS (
+                SELECT 1
+                  FROM sis_caixa cx
+                 WHERE cx.historico LIKE CONCAT('%Tarifa Sicredi do titulo ', l.id, ' /%')
+                    OR cx.historico LIKE CONCAT('%Tarifa titulo ', l.id, ' via%')
+                    OR cx.historico LIKE CONCAT('%Tarifa titulo ', l.id, ' no arq.%')
+            )
         )
       ORDER BY l.datapag, l.id"
 );
@@ -182,6 +222,21 @@ function inserirCaixa(mysqli_stmt $selectStmt, mysqli_stmt $insertStmt, int $tit
     $insertStmt->execute();
     if ($insertStmt->affected_rows !== 1) {
         throw new RuntimeException("caixa do titulo {$tituloId} nao inserido");
+    }
+    return true;
+}
+
+function inserirTarifaCaixa(mysqli_stmt $selectStmt, mysqli_stmt $insertStmt, int $tituloId, string $login, string $data, float $tarifa): bool
+{
+    if ($tarifa <= 0 || caixaExiste($selectStmt, $tituloId)) {
+        return false;
+    }
+    $uuid = uuid4();
+    $historico = caixaTarifaHistorico($tituloId, $login);
+    $insertStmt->bind_param('sssd', $uuid, $data, $historico, $tarifa);
+    $insertStmt->execute();
+    if ($insertStmt->affected_rows !== 1) {
+        throw new RuntimeException("tarifa do titulo {$tituloId} nao inserida no caixa");
     }
     return true;
 }
@@ -256,8 +311,10 @@ while ($row = $notificacoes->fetch_assoc()) {
         abs((float) $valorPrincipalPago - (float) $valorBase) <= 0.01
     );
     $vinculoForte = (
-        $idEmpresa !== null &&
-        (string) $titulo['id_empresa'] === (string) $idEmpresa &&
+        (
+            $idEmpresa === null ||
+            (string) $titulo['id_empresa'] === (string) $idEmpresa
+        ) &&
         preg_replace('/\D+/', '', (string) $titulo['nossonum']) === preg_replace('/\D+/', '', $nosso)
     );
     $valorDivergenteComVinculo = (!$valorAceito && $vinculoForte);
@@ -305,6 +362,7 @@ while ($row = $notificacoes->fetch_assoc()) {
         'acrescimo' => money2($titulo['acrescimo']),
         'valor_liquido' => $valorLiquidoCadastro,
         'valor_divergente' => $valorDivergenteComVinculo,
+        'tarifa' => $tarifaEntrada,
         'datapag' => eventDate($dados),
         'recibo' => (string) ($dados['idMovi'] ?? $dados['idEventoWebhook'] ?? ('sicredi-' . $row['id'])),
         'referencia' => $titulo['referencia'],
@@ -324,6 +382,7 @@ while ($row = $resultCaixaPendentes->fetch_assoc()) {
         'login' => (string) $row['login'],
         'datapag' => (string) $row['datapag'],
         'valor_pago' => money2($row['valorpag']),
+        'tarifa' => (float) money2($row['tarifa_paga']) > 0 ? money2($row['tarifa_paga']) : $tarifaEntrada,
         'historico' => caixaHistorico((int) $row['titulo_id'], (string) $row['login']),
     ];
 }
@@ -332,14 +391,16 @@ echo ($apply ? "MODO APLICACAO\n" : "MODO SIMULACAO\n");
 echo "Periodo analisado: {$days} dia(s)\n";
 echo "Candidatos aprovados: " . count($candidatos) . "\n";
 echo "Caixas pendentes: " . count($caixaPendentes) . "\n";
+echo "Tarifa Sicredi configurada: {$tarifaEntrada}\n";
 foreach ($candidatos as $c) {
     echo sprintf(
-        "#%d titulo=%d login=%s nosso=%s pago=%s liquido=%s venc/ref=%s data=%s movimento=%s acao=%s\n",
+        "#%d titulo=%d login=%s nosso=%s pago=%s tarifa=%s liquido=%s venc/ref=%s data=%s movimento=%s acao=%s\n",
         $c['notif_id'],
         $c['titulo_id'],
         $c['login'],
         $c['nosso'],
         $c['valor_pago'],
+        $c['tarifa'],
         $c['valor_liquido'],
         $c['referencia'],
         $c['datapag'],
@@ -349,10 +410,11 @@ foreach ($candidatos as $c) {
 }
 foreach ($caixaPendentes as $c) {
     echo sprintf(
-        "caixa_pendente titulo=%d login=%s valor=%s data=%s historico=%s\n",
+        "caixa_pendente titulo=%d login=%s valor=%s tarifa=%s data=%s historico=%s\n",
         $c['titulo_id'],
         $c['login'],
         $c['valor_pago'],
+        $c['tarifa'],
         $c['datapag'],
         $c['historico']
     );
@@ -374,14 +436,20 @@ try {
     foreach ($candidatos as $c) {
         if (!$c['ja_pago']) {
             $valor = (float) $c['valor_pago'];
-            $updateTitulo->bind_param('ssdi', $c['datapag'], $c['recibo'], $valor, $c['titulo_id']);
+            $tarifa = (float) $c['tarifa'];
+            $updateTitulo->bind_param('ssddi', $c['datapag'], $c['recibo'], $valor, $tarifa, $c['titulo_id']);
             $updateTitulo->execute();
             if ($updateTitulo->affected_rows !== 1) {
                 throw new RuntimeException("titulo {$c['titulo_id']} nao atualizado");
             }
+        } else {
+            $tarifa = (float) $c['tarifa'];
+            $updateTarifaTitulo->bind_param('di', $tarifa, $c['titulo_id']);
+            $updateTarifaTitulo->execute();
         }
 
         inserirCaixa($selectCaixaTitulo, $insertCaixa, $c['titulo_id'], $c['login'], $c['datapag'], (float) $c['valor_pago']);
+        inserirTarifaCaixa($selectCaixaTarifaTitulo, $insertCaixaTarifa, $c['titulo_id'], $c['login'], $c['datapag'], (float) $c['tarifa']);
 
         $resposta = $c['resposta'];
         foreach ($c['notif_ids'] as $notifId) {
@@ -394,6 +462,12 @@ try {
     }
     foreach ($caixaPendentes as $c) {
         inserirCaixa($selectCaixaTitulo, $insertCaixa, $c['titulo_id'], $c['login'], $c['datapag'], (float) $c['valor_pago']);
+        if ((float) $c['tarifa'] > 0) {
+            $tarifa = (float) $c['tarifa'];
+            $updateTarifaTitulo->bind_param('di', $tarifa, $c['titulo_id']);
+            $updateTarifaTitulo->execute();
+            inserirTarifaCaixa($selectCaixaTarifaTitulo, $insertCaixaTarifa, $c['titulo_id'], $c['login'], $c['datapag'], $tarifa);
+        }
     }
 
     $mysqli->commit();
