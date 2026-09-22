@@ -20,7 +20,7 @@ else
   ROOT_DIR="$(pwd)"
 fi
 ADMIN_ADDONS="$MKAUTH_DIR/admin/addons"
-JOB_DIR="$MKAUTH_DIR/jobs/SICREDIAPI"
+JOB_DIR="$MKAUTH_DIR/jobs/SICREDIAPI_ADDON"
 STAMP="$(date +%Y%m%d%H%M%S)"
 
 if [ "$(id -u)" -ne 0 ]; then
