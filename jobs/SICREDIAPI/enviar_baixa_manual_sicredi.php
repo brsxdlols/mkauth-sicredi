@@ -403,6 +403,11 @@ foreach ($candidatos as $c) {
     $boleto = decodeJson($consulta['body']);
     $situacao = strtoupper(trim((string) ($boleto['situacao'] ?? '')));
     $nossoBanco = onlyDigits($boleto['nossoNumero'] ?? '');
+    if ($consulta['http_code'] === 404) {
+        upsertLog($mysqli, $c, 'BLOQUEADO', 404, null, 'Boleto nao encontrado na carteira Sicredi');
+        echo sprintf("titulo=%d nosso=%s consulta=404 status=BLOQUEADO\n", $c['id'], $c['nossonum']);
+        continue;
+    }
     if ($consulta['http_code'] !== 200 || $nossoBanco !== (string) $c['nossonum']) {
         $erro = 'Consulta Sicredi HTTP ' . $consulta['http_code'] . ': ' . ($consulta['error'] ?: $consulta['body']);
         upsertLog($mysqli, $c, 'ERRO', (int) $consulta['http_code'], null, $erro);
