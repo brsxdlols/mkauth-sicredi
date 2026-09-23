@@ -8,7 +8,7 @@ DB_PASS="${MKAUTH_DB_PASS:-vertrigo}"
 DB_NAME="${MKAUTH_DB_NAME:-mkradius}"
 INSTALL_CRON="${INSTALL_CRON:-1}"
 RUN_CONCILIADOR_NOW="${RUN_CONCILIADOR_NOW:-1}"
-ENABLE_BAIXA_MANUAL_SICREDI="${ENABLE_BAIXA_MANUAL_SICREDI:-auto}"
+ENABLE_BAIXA_MANUAL_SICREDI="${ENABLE_BAIXA_MANUAL_SICREDI:-1}"
 RUN_BAIXA_MANUAL_NOW="${RUN_BAIXA_MANUAL_NOW:-0}"
 PHP_BIN="${PHP_BIN:-/opt/php8/bin/php}"
 WEB_USER="${WEB_USER:-www-data}"
@@ -131,14 +131,6 @@ if [ "$INSTALL_CRON" = "1" ]; then
 CRON
   chmod 644 /etc/cron.d/conciliar_sicredi_desconto
   echo "Cron instalado: /etc/cron.d/conciliar_sicredi_desconto"
-
-  if [ "$ENABLE_BAIXA_MANUAL_SICREDI" = "auto" ]; then
-    if [ -f /etc/cron.d/enviar_baixa_manual_sicredi ]; then
-      ENABLE_BAIXA_MANUAL_SICREDI=1
-    else
-      ENABLE_BAIXA_MANUAL_SICREDI=0
-    fi
-  fi
 
   if [ "$ENABLE_BAIXA_MANUAL_SICREDI" = "1" ]; then
     cat > /etc/cron.d/enviar_baixa_manual_sicredi <<CRON
