@@ -261,6 +261,21 @@ function enviarBaixa(array $carteira, string $accessToken, string $nossoNumero):
     ], '{}');
 }
 
+function consultarBoleto(array $carteira, string $accessToken, string $nossoNumero): array
+{
+    $query = http_build_query([
+        'codigoBeneficiario' => $carteira['beneficiario'],
+        'nossoNumero' => $nossoNumero,
+    ]);
+    return httpRequest('GET', SICREDI_BASE_URL . '/cobranca/boleto/v1/boletos?' . $query, [
+        'Authorization: Bearer ' . $accessToken,
+        'x-api-key: ' . $carteira['x_api_key'],
+        'Content-Type: application/json',
+        'cooperativa: ' . $carteira['cooperativa'],
+        'posto: ' . $carteira['posto'],
+    ]);
+}
+
 function insertNotificacao(mysqli $mysqli, array $titulo, array $carteira, int $httpCode, string $responseBody, string $status): void
 {
     $payload = [
@@ -331,6 +346,7 @@ $sql = "SELECT l.id, l.login, c.nome, l.nossonum, l.id_empresa, l.datavenc, l.pr
            AND LOWER(TRIM(IFNULL(l.coletor, ''))) NOT IN ('api', 'mk-bot')
            AND LOWER(IFNULL(l.formapag, '')) NOT LIKE '%boleto%'
            AND LOWER(IFNULL(l.formapag, '')) NOT LIKE 'liquidado%'
+           AND LOWER(IFNULL(l.formapag, '')) NOT LIKE '%sicredi%'
            " . ($hasLogTable ? "AND (bl.id IS NULL OR bl.status IN ('ERRO', 'PENDENTE'))" : "") . "
          ORDER BY l.datapag ASC, l.id ASC
          LIMIT ?";
@@ -383,6 +399,29 @@ $resolvidos = 0;
 $erros = 0;
 
 foreach ($candidatos as $c) {
+    $consulta = consultarBoleto($carteira, $accessToken, (string) $c['nossonum']);
+    $boleto = decodeJson($consulta['body']);
+    $situacao = strtoupper(trim((string) ($boleto['situacao'] ?? '')));
+    $nossoBanco = onlyDigits($boleto['nossoNumero'] ?? '');
+    if ($consulta['http_code'] !== 200 || $nossoBanco !== (string) $c['nossonum']) {
+        $erro = 'Consulta Sicredi HTTP ' . $consulta['http_code'] . ': ' . ($consulta['error'] ?: $consulta['body']);
+        upsertLog($mysqli, $c, 'ERRO', (int) $consulta['http_code'], null, $erro);
+        echo sprintf("titulo=%d nosso=%s consulta=%d status=ERRO\n", $c['id'], $c['nossonum'], $consulta['http_code']);
+        $erros++;
+        continue;
+    }
+    if (strpos($situacao, 'LIQUIDADO') === 0 || strpos($situacao, 'BAIXADO') === 0) {
+        upsertLog($mysqli, $c, 'RESOLVIDO', 200, null, 'Boleto ja ' . $situacao . ' no Sicredi');
+        echo sprintf("titulo=%d nosso=%s situacao=%s status=JA_RESOLVIDO\n", $c['id'], $c['nossonum'], $situacao);
+        $resolvidos++;
+        continue;
+    }
+    if (!in_array($situacao, ['EM CARTEIRA', 'EM CARTEIRA PIX', 'VENCIDO'], true)) {
+        upsertLog($mysqli, $c, 'BLOQUEADO', 200, null, 'Situacao Sicredi: ' . $situacao);
+        echo sprintf("titulo=%d nosso=%s situacao=%s status=BLOQUEADO\n", $c['id'], $c['nossonum'], $situacao);
+        continue;
+    }
+
     $requestPayload = json_encode([
         'endpoint' => '/cobranca/boleto/v1/boletos/' . $c['nossonum'] . '/baixa',
         'body' => new stdClass(),
@@ -393,7 +432,8 @@ foreach ($candidatos as $c) {
     $transactionId = (string) ($json['transactionId'] ?? '');
     $status = respostaStatus((int) $response['http_code'], $body);
 
-    upsertLog($mysqli, $c, resolvedMessage((int) $response['http_code'], $body) ? 'RESOLVIDO' : 'ERRO', (int) $response['http_code'], $transactionId, $body, $requestPayload);
+    $logStatus = $response['http_code'] === 202 ? 'ENVIADO' : (resolvedMessage((int) $response['http_code'], $body) ? 'RESOLVIDO' : 'ERRO');
+    upsertLog($mysqli, $c, $logStatus, (int) $response['http_code'], $transactionId, $body, $requestPayload);
     insertNotificacao($mysqli, $c, $carteira, (int) $response['http_code'], $body, $status);
 
     if ($status === 'BAIXA MANUAL ENVIADA') {
