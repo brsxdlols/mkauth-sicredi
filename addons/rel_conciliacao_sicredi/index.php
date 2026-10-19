@@ -37,8 +37,8 @@
         .metric b { display: block; font-size: 21px; color: var(--sicredi-dark); line-height: 1.25; }
         .metric span { color: #59735d; font-size: 11px; text-transform: uppercase; font-weight: 700; }
         table { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 0; background: #fff; }
-        thead { position: sticky; top: 0; z-index: 20; }
-        th { background: var(--sicredi-green); color: #fff; font-size: 11px; text-align: left; padding: 8px 7px; position: sticky; top: 0; z-index: 21; box-shadow: 0 1px 0 var(--sicredi-dark); }
+        thead { position: static; }
+        th { background: var(--sicredi-green); color: #fff; font-size: 11px; text-align: left; padding: 8px 7px; position: static; box-shadow: 0 1px 0 var(--sicredi-dark); }
         td { border-bottom: 1px solid #e6edf3; padding: 7px; font-size: 12px; vertical-align: top; overflow-wrap: anywhere; }
         th:nth-child(1), td:nth-child(1) { width: 72px; }
         th:nth-child(2), td:nth-child(2) { width: 48px; }
@@ -58,7 +58,9 @@
         .badge { display: inline-block; padding: 3px 7px; border-radius: 4px; font-weight: 700; font-size: 12px; background: #e7f6ee; color: #17643b; }
         .badge-soft { background: #edf3f8; color: #405263; }
         .badge-warn { background: #fff4df; color: #855800; }
-        .scroll { overflow-y: auto; overflow-x: hidden; max-height: 68vh; border: 1px solid #dfe5ec; border-radius: 6px; }
+        .scroll { overflow: visible; border: 1px solid #dfe5ec; border-radius: 6px; }
+        .pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 12px 0; }
+        .pagination select { padding: 6px; border: 1px solid var(--sicredi-border); border-radius: 4px; }
         @media (max-width: 1050px) {
             .filters, .summary { grid-template-columns: 1fr; }
             .filter-action { padding-top: 0; }
@@ -189,6 +191,13 @@ $totalTarifa = 0.0;
 $clientes = [];
 $dias = [];
 $conciliadas = 0;
+$tarifasPendentes = 0;
+$tarifasConfirmadas = [];
+$hasTarifaLog = mysqli_query($link, "SHOW TABLES LIKE 'sicredi_tarifa_api_log'");
+if ($hasTarifaLog && mysqli_num_rows($hasTarifaLog) > 0) {
+    $feeResult = mysqli_query($link, 'SELECT titulo_id, tarifa_api FROM sicredi_tarifa_api_log');
+    while ($fee = mysqli_fetch_assoc($feeResult)) $tarifasConfirmadas[(int) $fee['titulo_id']] = (float) $fee['tarifa_api'];
+}
 
 $idEmpresas = array_keys($eventsByEmpresa);
 $nossos = array_keys($eventsByNosso);
@@ -290,6 +299,13 @@ if ($idEmpresas || $nossos) {
         }
 
         $row = $title;
+        $row['tarifa_pendente'] = strtolower((string) $row['coletor']) === 'sicrediapi'
+            && (!isset($tarifasConfirmadas[(int) $row['titulo']])
+                || abs($tarifasConfirmadas[(int) $row['titulo']] - (float) $row['tarifa_paga']) > 0.001);
+        if ($row['tarifa_pendente']) {
+            $tarifasPendentes++;
+            $row['tarifa_paga'] = 0;
+        }
         $row['notificacao_id'] = $maxId;
         $row['data_notificacao'] = $maxData;
         $row['data_relatorio'] = $maxData;
@@ -315,6 +331,19 @@ if ($idEmpresas || $nossos) {
         }
     }
 }
+$perPage = (int) ($_GET['por_pagina'] ?? 10);
+if (!in_array($perPage, [10, 20, 50], true)) $perPage = 10;
+$rowCount = count($rows);
+$pageCount = max(1, (int) ceil($rowCount / $perPage));
+$page = max(1, min($pageCount, (int) ($_GET['pagina'] ?? 1)));
+$offset = ($page - 1) * $perPage;
+$pageRows = array_slice($rows, $offset, $perPage);
+$pageFilters = ['data_inicial' => $start, 'data_final' => $end, 'origem' => $origin,
+    'busca' => $search, 'ordem' => $order, 'por_pagina' => $perPage];
+function sicredi_page_url($filters, $page)
+{
+    return '?' . http_build_query(array_merge($filters, ['pagina' => $page]));
+}
 ?>
 <div class="wrap">
     <div class="panel titlebar">
@@ -333,6 +362,7 @@ if ($idEmpresas || $nossos) {
     </div>
 
     <form class="panel filters no-print" method="get">
+        <input type="hidden" name="por_pagina" value="<?php echo $perPage; ?>">
         <div class="field">
             <label>Data inicial</label>
             <input type="date" name="data_inicial" value="<?php echo h($start); ?>">
@@ -372,11 +402,34 @@ if ($idEmpresas || $nossos) {
         <div class="metric"><span>Clientes</span><b><?php echo count($clientes); ?></b></div>
         <div class="metric"><span>Dias com baixa</span><b><?php echo count($dias); ?></b></div>
         <div class="metric"><span>Total baixado</span><b><?php echo money_br($total); ?></b></div>
-        <div class="metric"><span>Total tarifas</span><b><?php echo money_br($totalTarifa); ?></b></div>
-        <div class="metric"><span>Liquido caixa</span><b><?php echo money_br($total - $totalTarifa); ?></b></div>
+        <div class="metric"><span>Tarifas confirmadas</span><b><?php echo money_br($totalTarifa); ?></b></div>
+        <div class="metric"><span><?php echo $tarifasPendentes ? 'Liquido parcial' : 'Liquido caixa'; ?></span><b><?php echo money_br($total - $totalTarifa); ?></b></div>
     </div>
 
     <div class="panel">
+        <?php if ($tarifasPendentes): ?>
+        <p class="muted"><?php echo $tarifasPendentes; ?> tarifa(s) aguardando confirmacao na API financeira. Os totais de tarifas e liquido consideram apenas tarifas confirmadas.</p>
+        <?php endif; ?>
+        <div class="pagination no-print">
+            <form method="get">
+                <?php foreach ($pageFilters as $key => $value): if ($key === 'por_pagina') continue; ?>
+                    <input type="hidden" name="<?php echo h($key); ?>" value="<?php echo h($value); ?>">
+                <?php endforeach; ?>
+                <label>Linhas por pagina
+                <select name="por_pagina" onchange="this.form.submit()">
+                    <?php foreach ([10, 20, 50] as $size): ?>
+                    <option value="<?php echo $size; ?>" <?php echo $perPage === $size ? 'selected' : ''; ?>><?php echo $size; ?></option>
+                    <?php endforeach; ?>
+                </select></label>
+                <noscript><button type="submit">Aplicar</button></noscript>
+            </form>
+            <span>Mostrando <?php echo $rowCount ? $offset + 1 : 0; ?> a <?php echo min($offset + $perPage, $rowCount); ?> de <?php echo $rowCount; ?> registros</span>
+            <div>
+                <?php if ($page > 1): ?><a class="btn btn-light" href="<?php echo h(sicredi_page_url($pageFilters, $page - 1)); ?>">Anterior</a><?php endif; ?>
+                <span>Pagina <?php echo $page; ?> de <?php echo $pageCount; ?></span>
+                <?php if ($page < $pageCount): ?><a class="btn btn-light" href="<?php echo h(sicredi_page_url($pageFilters, $page + 1)); ?>">Proxima</a><?php endif; ?>
+            </div>
+        </div>
         <div class="scroll">
             <table>
                 <thead>
@@ -403,11 +456,11 @@ if ($idEmpresas || $nossos) {
                 $dayTotal = 0.0;
                 $dayTarifa = 0.0;
                 $dayCount = 0;
-                foreach ($rows as $row) {
+                foreach ($pageRows as $row) {
                     $day = substr($row['data_relatorio'], 0, 10);
                     if ($currentDay !== $day) {
                         if ($currentDay !== null) {
-                            echo '<tr class="total-row"><td colspan="7">Total do dia ' . h(date_br($currentDay)) . '</td><td class="num">' . h(money_br($dayTotal)) . '<br><span class="muted">Tarifa: ' . h(money_br($dayTarifa)) . '</span></td><td colspan="3">' . h(money_br($dayTotal - $dayTarifa)) . ' liquido<br>' . $dayCount . ' baixa(s)</td></tr>';
+                            echo '<tr class="total-row"><td colspan="7">Subtotal do dia nesta pagina ' . h(date_br($currentDay)) . '</td><td class="num">' . h(money_br($dayTotal)) . '<br><span class="muted">Tarifa: ' . h(money_br($dayTarifa)) . '</span></td><td colspan="3">' . h(money_br($dayTotal - $dayTarifa)) . ' liquido parcial<br>' . $dayCount . ' baixa(s)</td></tr>';
                         }
                         $currentDay = $day;
                         $dayTotal = 0.0;
@@ -438,7 +491,9 @@ if ($idEmpresas || $nossos) {
                     echo '<td data-label="Valor titulo" class="num">' . h(money_br($row['valor'])) . '</td>';
                     echo '<td data-label="Desc." class="num">' . h(money_br($row['desconto'])) . '</td>';
                     echo '<td data-label="Valor pago" class="num"><span class="badge">' . h(money_br($row['valorpag'])) . '</span>';
-                    if ($tarifa > 0) {
+                    if ($row['tarifa_pendente']) {
+                        echo '<br><span class="muted">Tarifa: a confirmar</span>';
+                    } elseif ($tarifa > 0) {
                         echo '<br><span class="muted">Tarifa: ' . h(money_br($tarifa)) . '</span><br><span class="muted">Liquido: ' . h(money_br((float) $row['valorpag'] - $tarifa)) . '</span>';
                     }
                     echo '</td>';
@@ -448,11 +503,32 @@ if ($idEmpresas || $nossos) {
                     echo '</tr>';
                 }
                 if ($currentDay !== null) {
-                    echo '<tr class="total-row"><td colspan="7">Total do dia ' . h(date_br($currentDay)) . '</td><td class="num">' . h(money_br($dayTotal)) . '<br><span class="muted">Tarifa: ' . h(money_br($dayTarifa)) . '</span></td><td colspan="3">' . h(money_br($dayTotal - $dayTarifa)) . ' liquido<br>' . $dayCount . ' baixa(s)</td></tr>';
+                    echo '<tr class="total-row"><td colspan="7">Subtotal do dia nesta pagina ' . h(date_br($currentDay)) . '</td><td class="num">' . h(money_br($dayTotal)) . '<br><span class="muted">Tarifa: ' . h(money_br($dayTarifa)) . '</span></td><td colspan="3">' . h(money_br($dayTotal - $dayTarifa)) . ' liquido parcial<br>' . $dayCount . ' baixa(s)</td></tr>';
                 }
                 ?>
                 </tbody>
             </table>
+        </div>
+        <p class="muted">Indicadores: todo o periodo filtrado. Subtotais e impressao: registros desta pagina.</p>
+        <div class="pagination no-print">
+            <form method="get">
+                <?php foreach ($pageFilters as $key => $value): if ($key === 'por_pagina') continue; ?>
+                    <input type="hidden" name="<?php echo h($key); ?>" value="<?php echo h($value); ?>">
+                <?php endforeach; ?>
+                <label>Linhas por pagina
+                <select name="por_pagina" onchange="this.form.submit()">
+                    <?php foreach ([10, 20, 50] as $size): ?>
+                    <option value="<?php echo $size; ?>" <?php echo $perPage === $size ? 'selected' : ''; ?>><?php echo $size; ?></option>
+                    <?php endforeach; ?>
+                </select></label>
+                <noscript><button type="submit">Aplicar</button></noscript>
+            </form>
+            <span>Mostrando <?php echo $rowCount ? $offset + 1 : 0; ?> a <?php echo min($offset + $perPage, $rowCount); ?> de <?php echo $rowCount; ?> registros</span>
+            <div>
+                <?php if ($page > 1): ?><a class="btn btn-light" href="<?php echo h(sicredi_page_url($pageFilters, $page - 1)); ?>">Anterior</a><?php endif; ?>
+                <span>Pagina <?php echo $page; ?> de <?php echo $pageCount; ?></span>
+                <?php if ($page < $pageCount): ?><a class="btn btn-light" href="<?php echo h(sicredi_page_url($pageFilters, $page + 1)); ?>">Proxima</a><?php endif; ?>
+            </div>
         </div>
     </div>
 </div>

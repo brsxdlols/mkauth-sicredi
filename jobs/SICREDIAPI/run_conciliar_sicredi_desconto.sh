@@ -10,4 +10,5 @@ mkdir -p "$LOG_DIR"
 {
   echo "===== $(date '+%Y-%m-%d %H:%M:%S') ====="
   /usr/bin/flock -n "$LOCK_FILE" /opt/php8/bin/php "${MKAUTH_DIR:-/opt/mk-auth}/jobs/SICREDIAPI_ADDON/conciliar_sicredi_desconto.php" --days=15 --apply
+  /usr/bin/flock -n /tmp/conciliar_tarifas_sicredi.lock /opt/php8/bin/php "${MKAUTH_DIR:-/opt/mk-auth}/jobs/SICREDIAPI_ADDON/conciliar_tarifas_sicredi.php" --days=15 --apply
 } >> "$LOG_FILE" 2>&1
