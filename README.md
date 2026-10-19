@@ -139,7 +139,7 @@ Antes de instalar, o script cria backups dos arquivos de menu quando eles forem 
 
 ## Relatorio e menu
 
-O relatorio mostra 10, 20 ou 50 registros por pagina, com navegacao Anterior/Proxima e uma unica rolagem vertical na pagina. Os indicadores abrangem todo o filtro; subtotais e impressao abrangem a pagina atual.
+O relatorio mostra 10, 20, 50 ou 100 registros por pagina, com navegacao Anterior/Proxima e uma unica rolagem vertical na pagina. Os indicadores abrangem todo o filtro; subtotais e impressao abrangem a pagina atual.
 
 O instalador procura tambem `admin/scripts/addon.js`, `admin/addon.js` e `admin/assets/js/addon.js`. Para indicar o arquivo usado pelo servidor, defina `MKAUTH_ADDON_JS=/caminho/addon.js`. Os atalhos usam caminhos absolutos e nao dependem de `minha_url`.
 

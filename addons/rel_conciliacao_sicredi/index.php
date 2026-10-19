@@ -344,7 +344,7 @@ if ($idEmpresas || $nossos) {
     }
 }
 $perPage = (int) ($_GET['por_pagina'] ?? 10);
-if (!in_array($perPage, [10, 20, 50], true)) $perPage = 10;
+if (!in_array($perPage, [10, 20, 50, 100], true)) $perPage = 10;
 $rowCount = count($rows);
 $pageCount = max(1, (int) ceil($rowCount / $perPage));
 $page = max(1, min($pageCount, (int) ($_GET['pagina'] ?? 1)));
@@ -429,7 +429,7 @@ function sicredi_page_url($filters, $page)
                 <?php endforeach; ?>
                 <label>Linhas por pagina
                 <select name="por_pagina" onchange="this.form.submit()">
-                    <?php foreach ([10, 20, 50] as $size): ?>
+                    <?php foreach ([10, 20, 50, 100] as $size): ?>
                     <option value="<?php echo $size; ?>" <?php echo $perPage === $size ? 'selected' : ''; ?>><?php echo $size; ?></option>
                     <?php endforeach; ?>
                 </select></label>
@@ -529,7 +529,7 @@ function sicredi_page_url($filters, $page)
                 <?php endforeach; ?>
                 <label>Linhas por pagina
                 <select name="por_pagina" onchange="this.form.submit()">
-                    <?php foreach ([10, 20, 50] as $size): ?>
+                    <?php foreach ([10, 20, 50, 100] as $size): ?>
                     <option value="<?php echo $size; ?>" <?php echo $perPage === $size ? 'selected' : ''; ?>><?php echo $size; ?></option>
                     <?php endforeach; ?>
                 </select></label>
