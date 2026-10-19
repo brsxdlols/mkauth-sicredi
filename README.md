@@ -136,3 +136,31 @@ O envio de baixa manual para o Sicredi so considera titulos:
 Antes de enviar, a rotina consulta o boleto no banco. So solicita baixa quando estiver `EM CARTEIRA`, `EM CARTEIRA PIX` ou `VENCIDO`. Retorno `202` fica registrado como enviado; boletos ja baixados ou liquidados ficam resolvidos, evitando reenvio.
 
 Antes de instalar, o script cria backups dos arquivos de menu quando eles forem alterados.
+
+## Relatorio e menu
+
+O relatorio mostra 10, 20 ou 50 registros por pagina, com navegacao Anterior/Proxima e uma unica rolagem vertical na pagina. Os indicadores abrangem todo o filtro; subtotais e impressao abrangem a pagina atual.
+
+O instalador procura tambem `admin/scripts/addon.js`, `admin/addon.js` e `admin/assets/js/addon.js`. Para indicar o arquivo usado pelo servidor, defina `MKAUTH_ADDON_JS=/caminho/addon.js`. Os atalhos usam caminhos absolutos e nao dependem de `minha_url`.
+
+### Origem da tarifa
+
+O job `conciliar_tarifas_sicredi.php` consulta a API financeira Sicredi (Francesinha), por carteira e data, com paginacao. Usa exclusivamente `valorMovimento` dos debitos `TARIFA ENTRADA/LIQUIDACAO`, vinculados ao webhook pela agencia, posto, beneficiario, Nosso Numero, data do movimento e idTituloEmpresa. Nao usa tarifa fixa nem a taxa do cadastro do boleto.
+
+O cron da conciliacao executa tambem a conciliacao de tarifas a cada 5 minutos, consultando os ultimos 15 dias. Tarifas podem ficar disponiveis em data diferente do credito. Sem evidencia ou com vinculo ambiguo, nao ha lancamento presumido. O relatorio sinaliza valores pendentes e liquido parcial.
+
+A rotina atualiza `sis_lanc.tarifa_paga` e a saida de tarifa criada pelo addon em `sis_caixa`, inclusive para corrigir valores antigos dentro do periodo consultado. Preserva outros movimentos e grava a evidencia e a tarifa anterior em `sicredi_tarifa_api_log`. Em caso de falha de consulta, nenhuma tarifa e alterada naquela execucao. Nao envia pedidos de baixa ao banco.
+
+Simulacao (padrao, sem gravar no banco de dados):
+
+```bash
+/opt/php8/bin/php /opt/mk-auth/jobs/SICREDIAPI_ADDON/conciliar_tarifas_sicredi.php --days=15
+```
+
+Aplicacao com evidencia da API:
+
+```bash
+/opt/php8/bin/php /opt/mk-auth/jobs/SICREDIAPI_ADDON/conciliar_tarifas_sicredi.php --days=15 --apply
+```
+
+Para revisar um periodo maior, aumente `--days`. A instalacao executa apenas a simulacao de tarifas; as execucoes seguintes do cron aplicam a conciliacao. Nao altere tarifas manualmente para um valor global: cada carteira tem seus proprios debitos.

@@ -27,7 +27,9 @@ function money2($value): string
     return number_format((float) str_replace(',', '.', (string) $value), 2, '.', '');
 }
 
-$tarifaEntrada = money2(getenv('SICREDI_TARIFA_ENTRADA') ?: '0.99');
+// Webhooks de liquidacao nao informam a tarifa. O job de movimentacoes
+// financeiras preenche a tarifa real quando o debito estiver disponivel.
+$tarifaEntrada = '0.00';
 
 function eventDate(array $dados): string
 {
@@ -391,7 +393,7 @@ echo ($apply ? "MODO APLICACAO\n" : "MODO SIMULACAO\n");
 echo "Periodo analisado: {$days} dia(s)\n";
 echo "Candidatos aprovados: " . count($candidatos) . "\n";
 echo "Caixas pendentes: " . count($caixaPendentes) . "\n";
-echo "Tarifa Sicredi configurada: {$tarifaEntrada}\n";
+echo "Tarifas ausentes: aguardando consulta de movimentacoes financeiras Sicredi.\n";
 foreach ($candidatos as $c) {
     echo sprintf(
         "#%d titulo=%d login=%s nosso=%s pago=%s tarifa=%s liquido=%s venc/ref=%s data=%s movimento=%s acao=%s\n",
@@ -449,7 +451,7 @@ try {
         }
 
         inserirCaixa($selectCaixaTitulo, $insertCaixa, $c['titulo_id'], $c['login'], $c['datapag'], (float) $c['valor_pago']);
-        inserirTarifaCaixa($selectCaixaTarifaTitulo, $insertCaixaTarifa, $c['titulo_id'], $c['login'], $c['datapag'], (float) $c['tarifa']);
+        // A saida de tarifa e responsabilidade do job financeiro, com evidencia da API.
 
         $resposta = $c['resposta'];
         foreach ($c['notif_ids'] as $notifId) {
@@ -466,7 +468,7 @@ try {
             $tarifa = (float) $c['tarifa'];
             $updateTarifaTitulo->bind_param('di', $tarifa, $c['titulo_id']);
             $updateTarifaTitulo->execute();
-            inserirTarifaCaixa($selectCaixaTarifaTitulo, $insertCaixaTarifa, $c['titulo_id'], $c['login'], $c['datapag'], $tarifa);
+            // Tarifa de caixa sera conferida pelo job financeiro.
         }
     }
 

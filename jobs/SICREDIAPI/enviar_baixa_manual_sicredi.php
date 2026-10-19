@@ -146,13 +146,14 @@ function tableExists(mysqli $mysqli, string $table): bool
     return (int) ($row['total'] ?? 0) > 0;
 }
 
-function loadCarteira(mysqli $mysqli): array
+function loadCarteira(mysqli $mysqli, ?int $carteiraId = null): array
 {
+    $idFilter = $carteiraId === null ? '' : ' AND id = ' . (int) $carteiraId;
     $sql = "SELECT id, agencia, codigo_cliente, ponto_venda, token, token_bcash, nome, banco, utilizar
               FROM sis_boleto
-             WHERE banco = 'sicrediapi.php'
+             WHERE (banco = 'sicrediapi.php'
                 OR utilizar = 'bancoapi'
-                OR nome LIKE '%Sicred%'
+                OR nome LIKE '%Sicred%') $idFilter
              ORDER BY banco = 'sicrediapi.php' DESC, utilizar = 'bancoapi' DESC, id DESC
              LIMIT 1";
     $result = $mysqli->query($sql);
@@ -321,6 +322,12 @@ function upsertLog(mysqli $mysqli, array $titulo, string $status, ?int $httpCode
     $login = (string) $titulo['login'];
     $stmt->bind_param('issdsisss', $tituloId, $nosso, $login, $valor, $status, $httpCode, $transactionId, $responseBody, $payload);
     $stmt->execute();
+}
+
+// Compartilha o cliente HTTP/autenticacao com o conciliador de tarifas.
+// A conexao acima e somente leitura ate este ponto.
+if (defined('SICREDI_CLIENT_ONLY') && SICREDI_CLIENT_ONLY) {
+    return;
 }
 
 if ($apply) {

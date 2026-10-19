@@ -33,7 +33,7 @@ if [ ! -d "$MKAUTH_DIR" ]; then
   exit 1
 fi
 
-if [ ! -d "$ROOT_DIR/addons/rel_conciliacao_sicredi" ] || [ ! -f "$ROOT_DIR/jobs/SICREDIAPI/conciliar_sicredi_desconto.php" ] || [ ! -f "$ROOT_DIR/jobs/SICREDIAPI/enviar_baixa_manual_sicredi.php" ]; then
+if [ ! -d "$ROOT_DIR/addons/rel_conciliacao_sicredi" ] || [ ! -f "$ROOT_DIR/jobs/SICREDIAPI/conciliar_sicredi_desconto.php" ] || [ ! -f "$ROOT_DIR/jobs/SICREDIAPI/enviar_baixa_manual_sicredi.php" ] || [ ! -f "$ROOT_DIR/jobs/SICREDIAPI/conciliar_tarifas_sicredi.php" ] || [ ! -f "$ROOT_DIR/scripts/sicredi-menu.js" ]; then
   echo "Arquivos do instalador nao encontrados em $ROOT_DIR." >&2
   echo "Use o bootstrap via curl:" >&2
   echo "curl -fsSL https://raw.githubusercontent.com/brsxdlols/mkauth-sicredi/main/installers/github-install.sh | sudo bash" >&2
@@ -55,6 +55,7 @@ cp -a "$ROOT_DIR/addons/rel_conciliacao_sicredi/." "$ADMIN_ADDONS/rel_conciliaca
 cp -a "$ROOT_DIR/addons/log_sicredi_api/." "$ADMIN_ADDONS/log_sicredi_api/"
 cp -a "$ROOT_DIR/jobs/SICREDIAPI/conciliar_sicredi_desconto.php" "$JOB_DIR/conciliar_sicredi_desconto.php"
 cp -a "$ROOT_DIR/jobs/SICREDIAPI/run_conciliar_sicredi_desconto.sh" "$JOB_DIR/run_conciliar_sicredi_desconto.sh"
+cp -a "$ROOT_DIR/jobs/SICREDIAPI/conciliar_tarifas_sicredi.php" "$JOB_DIR/conciliar_tarifas_sicredi.php"
 cp -a "$ROOT_DIR/jobs/SICREDIAPI/enviar_baixa_manual_sicredi.php" "$JOB_DIR/enviar_baixa_manual_sicredi.php"
 cp -a "$ROOT_DIR/jobs/SICREDIAPI/run_enviar_baixa_manual_sicredi.sh" "$JOB_DIR/run_enviar_baixa_manual_sicredi.sh"
 
@@ -87,30 +88,38 @@ for addon in rel_conciliacao_sicredi log_sicredi_api; do
 done
 
 install_menu_lines() {
-  local menu_file=""
   local file
-  local line_baixas="add_menu.financeiro('{\"plink\": \"' + minha_url + 'addons/rel_conciliacao_sicredi/\", \"ptext\": \"Sicredi API - Baixas\"}');"
-  local line_logs="add_menu.financeiro('{\"plink\": \"' + minha_url + 'addons/log_sicredi_api/\", \"ptext\": \"Sicredi API - Logs\"}');"
-
-  for file in "$ADMIN_ADDONS/addon.js" "$ADMIN_ADDONS/addon_aplicativos.js"; do
+  local found=0
+  local -A seen=()
+  local primary="${MKAUTH_ADDON_JS:-$ADMIN_ADDONS/addon.js}"
+  mkdir -p "$(dirname "$primary")"
+  [ -f "$primary" ] || touch "$primary"
+  for file in "${MKAUTH_ADDON_JS:-$ADMIN_ADDONS/addon.js}" \
+      "$MKAUTH_DIR/admin/scripts/addon.js" "$MKAUTH_DIR/admin/addon.js" \
+      "$MKAUTH_DIR/admin/assets/js/addon.js" "$ADMIN_ADDONS/addon_aplicativos.js"; do
     [ -f "$file" ] || continue
+    [ -z "${seen[$file]:-}" ] || continue
+    seen[$file]=1
+    found=1
     cp -a "$file" "$file.bak_sicredi_$STAMP"
     sed -i \
+      -e '/^\/\/ SICREDI MENU INICIO$/,/^\/\/ SICREDI MENU FIM$/d' \
       -e '/addons\/rel_conciliacao_sicredi\//d' \
       -e '/addons\/log_sicredi_api\//d' \
       -e '/Sicredi API - Baixas/d' \
-      -e '/Sicredi API - Logs/d' \
-      "$file"
-    [ -n "$menu_file" ] || menu_file="$file"
+      -e '/Sicredi API - Logs/d' "$file"
+    printf '\n' >> "$file"
+    cat "$ROOT_DIR/scripts/sicredi-menu.js" >> "$file"
+    chmod a+r "$file"
+    echo "Menu Sicredi instalado em: $file"
   done
-
-  if [ -z "$menu_file" ]; then
-    menu_file="$ADMIN_ADDONS/addon.js"
-    touch "$menu_file"
+  if [ "$found" = 0 ]; then
+    file="${MKAUTH_ADDON_JS:-$ADMIN_ADDONS/addon.js}"
+    mkdir -p "$(dirname "$file")"
+    cp "$ROOT_DIR/scripts/sicredi-menu.js" "$file"
+    chmod a+r "$file"
+    echo "Menu Sicredi criado em: $file"
   fi
-
-  printf "\n%s\n%s\n" "$line_baixas" "$line_logs" >> "$menu_file"
-  echo "Menu Sicredi instalado em: $menu_file"
 }
 
 install_menu_lines
@@ -124,6 +133,7 @@ find "$ADMIN_ADDONS/rel_conciliacao_sicredi" "$ADMIN_ADDONS/log_sicredi_api" -ty
 "$PHP_BIN" -l "$ADMIN_ADDONS/log_sicredi_api/index.php"
 "$PHP_BIN" -l "$JOB_DIR/conciliar_sicredi_desconto.php"
 "$PHP_BIN" -l "$JOB_DIR/enviar_baixa_manual_sicredi.php"
+"$PHP_BIN" -l "$JOB_DIR/conciliar_tarifas_sicredi.php"
 
 if [ "$INSTALL_CRON" = "1" ]; then
   cat > /etc/cron.d/conciliar_sicredi_desconto <<CRON
@@ -169,6 +179,8 @@ fi
 
 echo "== Teste dry-run do conciliador =="
 "$PHP_BIN" "$JOB_DIR/conciliar_sicredi_desconto.php" --days=15 || true
+echo "== Teste dry-run das tarifas reais Sicredi =="
+"$PHP_BIN" "$JOB_DIR/conciliar_tarifas_sicredi.php" --days=15 || true
 echo "== Teste dry-run da baixa manual Sicredi =="
 "$PHP_BIN" "$JOB_DIR/enviar_baixa_manual_sicredi.php" --days=15 --limit=20 || true
 
