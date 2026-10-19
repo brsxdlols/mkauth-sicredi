@@ -13,7 +13,18 @@
     <style>
         * { box-sizing: border-box; }
         :root { --sicredi-green: #1f8f3a; --sicredi-dark: #11582b; --sicredi-soft: #edf8ef; --sicredi-border: #cfe8d3; --sicredi-lime: #75b82a; }
-        body { background: #f5f8f4; color: #243241; overflow-x: hidden; }
+        html { height: auto !important; overflow-x: hidden; overflow-y: auto; }
+        body { background: #f5f8f4; color: #243241; height: auto !important; max-height: none !important; overflow: visible !important; }
+        .webhook-trigger { font-family: inherit; border: 0; cursor: pointer; text-align: left; }
+        .webhook-trigger:hover { text-decoration: underline; }
+        .webhook-trigger:focus-visible { outline: 2px solid var(--sicredi-dark); outline-offset: 3px; }
+        .sicredi-webhook-dialog { margin: auto; width: min(900px, calc(100vw - 32px)); max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); padding: 20px; border: 1px solid var(--sicredi-border); border-radius: 8px; color: #243241; background: #fff; overflow: auto; }
+        .sicredi-webhook-dialog::backdrop { background: rgba(0, 0, 0, .55); }
+        .webhook-heading { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-bottom: 14px; }
+        .webhook-heading .btn { flex: 0 0 auto; width: auto; margin: 0; }
+        .webhook-heading h2 { margin: 0; font-size: 20px; color: var(--sicredi-dark); }
+        .webhook-event { padding: 14px 0; border-top: 1px solid var(--sicredi-border); }
+        .webhook-event pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #f5f8f4; padding: 12px; margin-top: 10px; font-size: 12px; }
         .wrap { width: 100%; max-width: 100%; margin: 18px auto; padding: 0 14px 28px; }
         .panel { width: 100%; max-width: 100%; background: #fff; border: 1px solid var(--sicredi-border); border-radius: 6px; padding: 14px; margin-bottom: 12px; }
         .titlebar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
@@ -307,6 +318,7 @@ if ($idEmpresas || $nossos) {
             $row['tarifa_paga'] = 0;
         }
         $row['notificacao_id'] = $maxId;
+        $row['webhooks'] = $uniqueEvents;
         $row['data_notificacao'] = $maxData;
         $row['data_relatorio'] = $maxData;
         $row['respostas_api'] = implode(', ', array_keys($respostas));
@@ -497,7 +509,7 @@ function sicredi_page_url($filters, $page)
                         echo '<br><span class="muted">Tarifa: ' . h(money_br($tarifa)) . '</span><br><span class="muted">Liquido: ' . h(money_br((float) $row['valorpag'] - $tarifa)) . '</span>';
                     }
                     echo '</td>';
-                    echo '<td data-label="Tipo API"><span class="' . h($badgeClass) . '">' . h($apiType) . '</span></td>';
+                    echo '<td data-label="Tipo API"><button type="button" class="webhook-trigger ' . h($badgeClass) . '" data-webhook-template="webhook-' . (int) $row['titulo'] . '" data-titulo="' . (int) $row['titulo'] . '" aria-haspopup="dialog" title="Ver webhook deste titulo">' . h($apiType) . '</button></td>';
                     echo '<td data-label="Recibo">' . h($row['recibo']) . '<br><span class="muted">' . h($row['coletor']) . '</span></td>';
                     echo '<td data-label="Notificacao"><a href="/admin/notificacao.hhvm?id=' . h($row['notificacao_id']) . '" target="_blank">#' . h($row['notificacao_id']) . '</a><br><span class="muted">' . h(date_br($row['data_notificacao'], true)) . '</span></td>';
                     echo '</tr>';
@@ -532,6 +544,30 @@ function sicredi_page_url($filters, $page)
         </div>
     </div>
 </div>
+<dialog id="sicredi-webhook-dialog" class="sicredi-webhook-dialog no-print" aria-labelledby="sicredi-webhook-heading">
+    <div class="webhook-heading">
+        <h2 id="sicredi-webhook-heading">Webhook Sicredi</h2>
+        <button type="button" class="btn btn-light" id="sicredi-webhook-close" autofocus>Fechar</button>
+    </div>
+    <div id="sicredi-webhook-content"></div>
+</dialog>
+<?php foreach ($pageRows as $row): ?>
+<template id="webhook-<?php echo (int) $row['titulo']; ?>">
+    <?php foreach ($row['webhooks'] as $webhook):
+        $decoded = json_decode((string) $webhook['dados'], true);
+        $payload = json_last_error() === JSON_ERROR_NONE
+            ? json_encode($decoded, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+            : (string) $webhook['dados'];
+    ?>
+    <section class="webhook-event">
+        <strong>Notificacao #<?php echo (int) $webhook['id']; ?></strong>
+        <div><?php echo h(date_br($webhook['data'], true)); ?> — <?php echo h($webhook['resposta']); ?></div>
+        <pre><?php echo h($payload); ?></pre>
+    </section>
+    <?php endforeach; ?>
+</template>
+<?php endforeach; ?>
+<script src="webhook-modal.js"></script>
 <?php include('../../baixo.php'); ?>
 <script src="../../menu.js.hhvm"></script>
 </body>
