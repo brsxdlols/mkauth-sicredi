@@ -1,4 +1,4 @@
-<?php require_once('config.php'); ?>
+<?php require_once('config.php'); require_once(__DIR__ . '/webhook-valores.php'); ?>
 <!DOCTYPE html>
 <html lang="pt-BR" class="has-navbar-fixed-top">
 <head>
@@ -319,6 +319,7 @@ if ($idEmpresas || $nossos) {
         }
         $row['notificacao_id'] = $maxId;
         $row['webhooks'] = $uniqueEvents;
+        $row['encargos'] = sicredi_encargos_eventos($uniqueEvents);
         $row['data_notificacao'] = $maxData;
         $row['data_relatorio'] = $maxData;
         $row['respostas_api'] = implode(', ', array_keys($respostas));
@@ -451,7 +452,7 @@ function sicredi_page_url($filters, $page)
                     <th>Cliente</th>
                     <th>Nosso No.</th>
                     <th>Referencia</th>
-                    <th class="num">Valor titulo</th>
+                    <th class="num">Valor original / juros</th>
                     <th class="num">Desc.</th>
                     <th class="num">Valor pago</th>
                     <th>Tipo API</th>
@@ -500,11 +501,16 @@ function sicredi_page_url($filters, $page)
                     echo '<td data-label="Cliente">' . $clienteNome . '<br><span class="muted">' . h($row['login']) . '</span></td>';
                     echo '<td data-label="Nosso No.">' . h($row['nossonum']) . '</td>';
                     echo '<td data-label="Referencia">' . h($row['referencia']) . '<br><span class="muted">' . h($row['obs']) . '</span><br><span class="muted"><b>Venc.</b> ' . h(date_br($row['datavenc'])) . ' &nbsp; <b>Lan&ccedil;:</b> ' . h(date_br($row['processamento'])) . '</span></td>';
-                    echo '<td data-label="Valor titulo" class="num">' . h(money_br($row['valor'])) . '</td>';
+                    echo '<td data-label="Valor original" class="num"><b>' . h(money_br($row['valor'])) . '</b>';
+                    echo '<br><span class="muted">Juros pagos: ' . h($row['encargos']['juros'] === null ? 'nao informado' : money_br($row['encargos']['juros'])) . '</span>';
+                    if ($row['encargos']['multa'] !== null && $row['encargos']['multa'] > 0) {
+                        echo '<br><span class="muted">Multa paga: ' . h(money_br($row['encargos']['multa'])) . '</span>';
+                    }
+                    echo '</td>';
                     echo '<td data-label="Desc." class="num">' . h(money_br($row['desconto'])) . '</td>';
                     echo '<td data-label="Valor pago" class="num"><span class="badge">' . h(money_br($row['valorpag'])) . '</span>';
                     if ($row['tarifa_pendente']) {
-                        echo '<br><span class="muted">Tarifa: a confirmar</span>';
+                        echo '<br><span class="muted" title="Ainda nao foi encontrado um debito de tarifa vinculado com seguranca a este boleto.">Tarifa: a confirmar</span>';
                     } elseif ($tarifa > 0) {
                         echo '<br><span class="muted">Tarifa: ' . h(money_br($tarifa)) . '</span><br><span class="muted">Liquido: ' . h(money_br((float) $row['valorpag'] - $tarifa)) . '</span>';
                     }

@@ -164,3 +164,5 @@ Aplicacao com evidencia da API:
 ```
 
 Para revisar um periodo maior, aumente `--days`. A instalacao executa apenas a simulacao de tarifas; as execucoes seguintes do cron aplicam a conciliacao. Nao altere tarifas manualmente para um valor global: cada carteira tem seus proprios debitos.
+
+O relatorio destaca o valor original do titulo e os juros pagos informados no webhook de liquidacao. Multa e exibida separadamente quando houver. Eventos repetidos nao somam encargos; pedidos de baixa manual e campos ausentes aparecem como nao informados.
